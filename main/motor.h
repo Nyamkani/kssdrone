@@ -38,6 +38,4 @@ class Motor
         rmt_channel_handle_t channel_ = nullptr;
         rmt_encoder_handle_t encoder_ = nullptr;
         bool initialized_ = false;
-
-        rmt_symbol_word_t symbols_[16] = {};
 };

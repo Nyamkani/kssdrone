@@ -148,20 +148,15 @@ esp_err_t Motor::SendThrottle(uint16_t throttle, bool telemetry)
         return ESP_ERR_INVALID_STATE;
     }
 
-    // esp_err_t done = rmt_tx_wait_all_done(this->channel_, 0);
-    // if (done != ESP_OK)
-    // {
-    //     return ESP_ERR_TIMEOUT;
-    // }
-
     uint16_t packet = MakeDshotPacket(throttle, telemetry);
 
-    BuildDshotSymbols(packet, this->symbols_, 16);
+    rmt_symbol_word_t symbols[16] = {};
+    BuildDshotSymbols(packet, symbols, 16);
 
     rmt_transmit_config_t tx_cfg = {};
     tx_cfg.loop_count = 0;
 
-    return rmt_transmit(this->channel_, this->encoder_, this->symbols_, sizeof(this->symbols_), &tx_cfg);
+    return rmt_transmit(this->channel_, this->encoder_, symbols, sizeof(symbols), &tx_cfg);
 }
 
 

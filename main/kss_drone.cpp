@@ -327,35 +327,6 @@ void KSSDrone::TryPrintMainLoopStats()
 #endif
 }
 
-
-void KSSDrone::TryPrintArmedProfileStats()
-{
-#if ENABLE_DRONE_MAIN_STATS_LOG
-    constexpr uint64_t PRINT_COUNT = 1000;
-
-    if (this->armed_prof_.count < PRINT_COUNT)
-    {
-        return;
-    }
-
-    const uint64_t count = this->armed_prof_.count;
-
-    ESP_LOGI(TAG,
-             "ARMED_PROF avg_us total=%lld prep=%lld slow=%lld ctrl=%lld "
-             "max_us total=%lld prep=%lld slow=%lld ctrl=%lld",
-             this->armed_prof_.total_us / count,
-             this->armed_prof_.prepare_us / count,
-             this->armed_prof_.slow_comp_us / count,
-             this->armed_prof_.control_us / count,
-             this->armed_prof_.total_max_us,
-             this->armed_prof_.prepare_max_us,
-             this->armed_prof_.slow_comp_max_us,
-             this->armed_prof_.control_max_us);
-
-    this->armed_prof_ = {};
-#endif
-}
-
 void KSSDrone::UpdateImuFrameStats(
     const SharedSnapshotFrame<IMU_PARESED_DATA>& frame,
     const int64_t now_us)

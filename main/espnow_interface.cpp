@@ -12,75 +12,154 @@
 EspNowInterface* EspNowInterface::instance_ = nullptr;
 static const char* TAG = "ESPNOW_IFACE";
 
-////////////////////////////////////////////////////////////////////////
+// void EspNowInterface::EspNowRecvCb(const esp_now_recv_info_t *info,
+//                                    const uint8_t *data,
+//                                    int len)
+// {
+
+//     // ESP_LOGI(TAG,
+//     //     "RX raw len=%d time=%lld",
+//     //     len,
+//     //     esp_timer_get_time()
+//     // );
+
+//     if (instance_ == nullptr || data == nullptr || len < sizeof(PacketType))
+//         return;
+
+//     PacketType type;
+//     std::memcpy(&type, data, sizeof(PacketType));
+
+//     switch(type)
+//     {
+//         case PacketType::CONTROL:
+//         {
+//             if(len != sizeof(ControlPacket))
+//                 return; // Invalid packet length for control packet, ignore it.
+
+//             ControlPacket pkt{};
+//             std::memcpy(&pkt, data, sizeof(ControlPacket));
+            
+//             if (pkt.magic != 0xA5A5A5A5)
+//                 return;
+
+//             instance_->last_rx_time_us_.store(esp_timer_get_time());
+
+//             // Handle control packet
+//             if (instance_->rx_queue_ != nullptr)
+//             {
+//                 // callback has to be fast, so we just push the raw packet to the queue and let the task handle it.
+//                 // xQueueSend(instance_->rx_queue_, &pkt, 0);
+//                    BaseType_t hp = pdFALSE;
+
+//                 xQueueOverwriteFromISR(instance_->rx_queue_, &pkt, &hp);
+
+//                 if (hp)
+//                     portYIELD_FROM_ISR();
+//             }
+
+//             break;
+//         }
+//         case PacketType::TELEMETRY:
+//         {
+//             // Handle telemetry packet
+//             break;
+
+//         }
+
+//         default:
+//             return; // Unknown packet type, ignore it.
+//     }
+// }
 
 void EspNowInterface::EspNowRecvCb(const esp_now_recv_info_t *info,
                                    const uint8_t *data,
                                    int len)
 {
-    (void)info;
-
-    EspNowInterface* self = instance_;
-    if (self == nullptr || data == nullptr)
-    {
+    if (instance_ == nullptr || data == nullptr)
         return;
-    }
 
-    /*
-     * callback 수신 count만 기록.
-     * 파싱은 espnow task에서 한다.
-     */
-    portENTER_CRITICAL(&self->stats_mux_);
-    self->stats_.raw_count++;
-    portEXIT_CRITICAL(&self->stats_mux_);
+    instance_->rx_raw_count_.fetch_add(1);
 
-    if (len != static_cast<int>(sizeof(ControlPacket)))
-    {
+    if (len < sizeof(PacketType))
         return;
-    }
+
+    PacketType type{};
+    std::memcpy(&type, data, sizeof(PacketType));
+
+    if (type != PacketType::CONTROL)
+        return;
+
+    if (len != sizeof(ControlPacket))
+        return;
+
+    instance_->rx_valid_count_.fetch_add(1);
 
     ControlPacket pkt{};
     std::memcpy(&pkt, data, sizeof(ControlPacket));
 
-    if (self->rx_queue_ != nullptr)
+    if (pkt.magic != 0xA5A5A5A5)
+        return;
+
+    instance_->rx_magic_ok_count_.fetch_add(1);
+
+    const int64_t now = esp_timer_get_time();
+
+    const int64_t prev_time = instance_->last_rx_time_us_.load();
+    const uint32_t prev_seq = instance_->last_seq_.load();
+
+    if (prev_time > 0)
+    {
+        const int64_t gap = now - prev_time;
+
+        int64_t old_max = instance_->max_rx_gap_us_.load();
+        while (gap > old_max &&
+               !instance_->max_rx_gap_us_.compare_exchange_weak(old_max, gap))
+        {
+        }
+
+        if (pkt.seq != prev_seq + 1)
+        {
+            instance_->seq_jump_count_.fetch_add(1);
+        }
+    }
+
+    instance_->last_seq_.store(pkt.seq);
+    instance_->last_rx_time_us_.store(now);
+    instance_->rx_count_.fetch_add(1);
+
+    if (instance_->rx_queue_ != nullptr)
     {
         BaseType_t hp = pdFALSE;
 
         BaseType_t ok =
-            xQueueOverwriteFromISR(self->rx_queue_, &pkt, &hp);
+            xQueueOverwriteFromISR(instance_->rx_queue_, &pkt, &hp);
 
         if (ok == pdTRUE)
         {
-            portENTER_CRITICAL(&self->stats_mux_);
-            self->stats_.queue_ok_count++;
-            portEXIT_CRITICAL(&self->stats_mux_);
+            instance_->rx_queue_ok_count_.fetch_add(1);
         }
 
         if (hp)
-        {
             portYIELD_FROM_ISR();
-        }
     }
 }
 
 esp_err_t EspNowInterface::SendTelemetry(const TelemetryPacket& td)
 {
-    if (!this->hw_initialized_)
-    {
-        return ESP_ERR_INVALID_STATE;
-    }
+    esp_err_t ret = ESP_OK;
 
-    TelemetryPacket td_copy = td;
+    TelemetryPacket td_copy = td; // Make a copy to modify the type field if necessary
 
-    td_copy.type = PacketType::TELEMETRY;
-    td_copy.seq = ++this->telemetry_seq_;
+    // Prepare telemetry packet
+    td_copy.type = PacketType::TELEMETRY; // Ensure the packet type is set correctly
 
-    return esp_now_send(
-        CONTROLLER_MAC,
-        reinterpret_cast<const uint8_t*>(&td_copy),
-        sizeof(td_copy)
-    );
+    td_copy.seq++;
+    // Send the telemetry packet
+    ret = esp_now_send(CONTROLLER_MAC, reinterpret_cast<const uint8_t*>(&td_copy), sizeof(td_copy));
+
+    return ret;
 }
+
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -96,52 +175,27 @@ bool EspNowInterface::IsMacValid(const uint8_t mac[6]) const
     return false;
 }
 
-EspNowRxStats EspNowInterface::GetStatsSnapshot()
+bool EspNowInterface::GetLatestCommand(ControlPacket& out) const
 {
-    EspNowRxStats copy{};
-
-    portENTER_CRITICAL(&this->stats_mux_);
-
-    copy = this->stats_;
-
-    portEXIT_CRITICAL(&this->stats_mux_);
-
-    return copy;
-}
-
-bool EspNowInterface::GetLatestCommand(ControlPacket& out)
-{
-    SharedSnapshotFrame<ControlPacket> frame{};
-
-    if (!this->cmd_snapshot_.Read(frame))
+    if (this->IsTimeout())
     {
         return false;
     }
 
-    const int64_t now_us = esp_timer_get_time();
-
-    if ((now_us - frame.timestamp_us) > TIMEOUT_US)
-    {
-        return false;
-    }
-
-    out = frame.data;
+    // Snapshot current published buffer index
+    const int idx = this->read_idx_.load();
+    out = cmd_buf_[idx];
     return true;
 }
 
-bool EspNowInterface::IsTimeout()
+bool EspNowInterface::IsTimeout() const
 {
-    SharedSnapshotFrame<ControlPacket> frame{};
+    const int64_t now = esp_timer_get_time();
+    const int64_t last_rx = this->last_rx_time_us_.load();
+    const int64_t dt = now - last_rx;
+    return (dt) > TIMEOUT_US;
+}   
 
-    if (!this->cmd_snapshot_.Read(frame))
-    {
-        return true;
-    }
-
-    const int64_t now_us = esp_timer_get_time();
-
-    return (now_us - frame.timestamp_us) > TIMEOUT_US;
-}
 //////////////////////////////////////////////////////////////////////////
 
 
@@ -168,10 +222,8 @@ void EspNowInterface::MainLoop()
 {
    while (true)
     {
-        if (this->IsTaskStopRequested())
-        {
+        if (this->task_stop_.load())
             break;
-        }
 
         switch(this->state_)
         {
@@ -218,14 +270,14 @@ void EspNowInterface::MainLoop()
 
 esp_err_t EspNowInterface::Init()
 {
-    portENTER_CRITICAL(&this->stats_mux_);
+    this->read_idx_.store(0);
+    this->write_idx_.store(1);
 
-    this->stats_ = {};
-
-    portEXIT_CRITICAL(&this->stats_mux_);
+    this->last_rx_time_us_.store(esp_timer_get_time());
 
     return ESP_OK;
 }
+
 
 esp_err_t EspNowInterface::Run()
 {
@@ -236,59 +288,22 @@ esp_err_t EspNowInterface::Run()
 
     ControlPacket pkt{};
 
-    if (xQueueReceive(this->rx_queue_, &pkt, pdMS_TO_TICKS(5)) != pdTRUE)
+    if (xQueueReceive(this->rx_queue_, &pkt, pdMS_TO_TICKS(5)) == pdTRUE)
     {
-        return ESP_OK;
-    }
+        if (pkt.magic != 0xA5A5A5A5)
+            return ESP_OK;
 
-    const int64_t now_us = esp_timer_get_time();
+        const int w = this->write_idx_.load();
 
-    bool publish = false;
+        this->cmd_buf_[w] = pkt;
 
-    portENTER_CRITICAL(&this->stats_mux_);
-
-    if (pkt.type == PacketType::CONTROL)
-    {
-        this->stats_.valid_count++;
-
-        if (pkt.magic == 0xA5A5A5A5)
-        {
-            this->stats_.magic_ok_count++;
-
-            if (this->stats_.last_rx_time_us > 0)
-            {
-                const int64_t gap =
-                    now_us - this->stats_.last_rx_time_us;
-
-                if (gap > this->stats_.max_rx_gap_us)
-                {
-                    this->stats_.max_rx_gap_us = gap;
-                }
-
-                if (pkt.seq != this->stats_.last_seq + 1)
-                {
-                    this->stats_.seq_jump_count++;
-                }
-            }
-
-            this->stats_.last_seq = pkt.seq;
-            this->stats_.last_rx_time_us = now_us;
-
-            this->stats_.rx_count++;
-
-            publish = true;
-        }
-    }
-
-    portEXIT_CRITICAL(&this->stats_mux_);
-
-    if (publish)
-    {
-        this->cmd_snapshot_.Write(pkt, now_us, 1);
+        this->read_idx_.store(w);
+        this->write_idx_.store(1 - w);
     }
 
     return ESP_OK;
 }
+
 
 esp_err_t EspNowInterface::Error()
 {
@@ -300,31 +315,31 @@ esp_err_t EspNowInterface::Error()
 
 esp_err_t EspNowInterface::StartTask()
 {
-    this->SetTaskStop(false);
-
-    BaseType_t ret = xTaskCreatePinnedToCore(
+    esp_err_t ret = xTaskCreatePinnedToCore(
         MainTask,
         "espnow_main_task",
-        4096 * 2,
+        4096*2,
         this,
         5,
         &this->handle_,
         0
     );
 
-    if (ret == pdPASS)
+    if (ret == 1)
     {
-        return ESP_OK;
+       ret = ESP_OK;
+    }
+    else 
+    {
+        ret = ESP_FAIL;
     }
 
-    this->handle_ = nullptr;
-    return ESP_FAIL;
+    return ret;
 }
-
 
 void EspNowInterface::StopTaskRequest()
 {
-    this->SetTaskStop(true);
+    this->task_stop_.store(true);
 
     TaskHandle_t handle = this->handle_;
 
@@ -332,28 +347,6 @@ void EspNowInterface::StopTaskRequest()
     {
         xTaskNotifyGive(handle);
     }
-}
-
-bool EspNowInterface::IsTaskStopRequested()
-{
-    bool stop = false;
-
-    portENTER_CRITICAL(&this->task_mux_);
-
-    stop = this->task_stop_;
-
-    portEXIT_CRITICAL(&this->task_mux_);
-
-    return stop;
-}
-
-void EspNowInterface::SetTaskStop(bool stop)
-{
-    portENTER_CRITICAL(&this->task_mux_);
-
-    this->task_stop_ = stop;
-
-    portEXIT_CRITICAL(&this->task_mux_);
 }
 
 
@@ -478,56 +471,52 @@ esp_err_t EspNowInterface::Initialize()
     return this->StartTask();
 }
 
-uint32_t EspNowInterface::GetRawCount()
+uint32_t EspNowInterface::GetRawCount() const
 {
-    return this->GetStatsSnapshot().raw_count;
+    return this->rx_raw_count_.load();
 }
 
-uint32_t EspNowInterface::GetValidCount()
+uint32_t EspNowInterface::GetValidCount() const
 {
-    return this->GetStatsSnapshot().valid_count;
+    return this->rx_valid_count_.load();
 }
 
-uint32_t EspNowInterface::GetMagicOkCount()
+uint32_t EspNowInterface::GetMagicOkCount() const
 {
-    return this->GetStatsSnapshot().magic_ok_count;
+    return this->rx_magic_ok_count_.load();
 }
 
-uint32_t EspNowInterface::GetQueueOkCount()
+uint32_t EspNowInterface::GetQueueOkCount() const
 {
-    return this->GetStatsSnapshot().queue_ok_count;
+    return this->rx_queue_ok_count_.load();
 }
 
-uint32_t EspNowInterface::GetRxCount()
+uint32_t EspNowInterface::GetRxCount() const
 {
-    return this->GetStatsSnapshot().rx_count;
+    return this->rx_count_.load();
 }
 
-uint32_t EspNowInterface::GetSeqJumpCount()
+uint32_t EspNowInterface::GetSeqJumpCount() const
 {
-    return this->GetStatsSnapshot().seq_jump_count;
+    return this->seq_jump_count_.load();
 }
 
-uint32_t EspNowInterface::GetLastSeq()
+uint32_t EspNowInterface::GetLastSeq() const
 {
-    return this->GetStatsSnapshot().last_seq;
+    return this->last_seq_.load();
 }
 
-int64_t EspNowInterface::GetLastRxTimeUs()
+int64_t EspNowInterface::GetLastRxTimeUs() const
 {
-    return this->GetStatsSnapshot().last_rx_time_us;
+    return this->last_rx_time_us_.load();
 }
 
-int64_t EspNowInterface::GetMaxRxGapUs()
+int64_t EspNowInterface::GetMaxRxGapUs() const
 {
-    return this->GetStatsSnapshot().max_rx_gap_us;
+    return this->max_rx_gap_us_.load();
 }
 
 void EspNowInterface::ResetMaxRxGap()
 {
-    portENTER_CRITICAL(&this->stats_mux_);
-
-    this->stats_.max_rx_gap_us = 0;
-
-    portEXIT_CRITICAL(&this->stats_mux_);
+    this->max_rx_gap_us_.store(0);
 }

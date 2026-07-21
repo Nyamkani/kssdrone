@@ -482,10 +482,10 @@ private:
                 Vec3 g_pred = PredictGravityBody();
 
                 // Residual: measured gravity - predicted gravity
-                // Vec3 r;
-                // r.x = a_meas.x - g_pred.x;
-                // r.y = a_meas.y - g_pred.y;
-                // r.z = a_meas.z - g_pred.z;
+                Vec3 r;
+                r.x = a_meas.x - g_pred.x;
+                r.y = a_meas.y - g_pred.y;
+                r.z = a_meas.z - g_pred.z;
 
                 // Approximate measurement correction:
                 // use cross product between predicted and measured gravity
@@ -494,14 +494,7 @@ private:
                 Vec3 corr = Cross(a_meas, g_pred);
 
                 // gain from measurement noise
-                // const float k = 1.0f / (1.0f + this->r_accel_);
-                
-                // const float tau = this->accel_tau_sec_;
-                // float k = 1.0f - std::exp(-in.dt / tau);
-                // k = std::clamp(k, 0.0f, 0.05f);
-
-                const float k = this->accel_corr_gain_;
-
+                const float k = 1.0f / (1.0f + this->r_accel_);
 
                 // Small-angle correction to quaternion
                 Quaternion dq;
@@ -514,8 +507,8 @@ private:
                 NormalizeQuaternion();
 
                 // Bias correction (simple form)
-                // this->gyro_bias_.x += corr.x * this->bias_gain_*k;
-                // this->gyro_bias_.y += corr.y * this->bias_gain_*k;
+                this->gyro_bias_.x += corr.x * this->bias_gain_;
+                this->gyro_bias_.y += corr.y * this->bias_gain_;
                 // this->gyro_bias_.z += corr.z * this->bias_gain_;
 
                 // Simplified covariance shrink after update
@@ -663,7 +656,5 @@ private:
 
             // simple bias adaptation gain
             float bias_gain_ = 1e-4f;
-
-            float accel_corr_gain_ = 0.005f;
     };
 #endif

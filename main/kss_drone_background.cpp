@@ -49,7 +49,7 @@ esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
 
     this->telemetry_send_dt_ += dt;
 
-    if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS && rx_dt_us > 2000)
+    if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS && rx_dt_us > 5000)
     {
         while (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS)
         {
@@ -173,21 +173,6 @@ void KSSDrone::HandleCommandEvents()
 
     const ControlPacket cmd = this->active_cmd_;
 
-    if (cmd.cmd_flags & CMD_EMERGENCY_STOP)
-    {
-        ESP_LOGE(TAG, "EMERGENCY STOP!");
-
-        this->armed_ = false;
-        this->landing_throttle_ = 0.0f;
-        this->throttle_prev_ = 0.0f;
-        this->pid_controller_.ResetIntegrator();
-        this->motor_interface_.SetMotorOutput(0, 0, 0, 0);
-
-        this->ChangeState(DroneState::DISARMED);
-
-        return;
-    }
-
     if (cmd.cmd_flags == CMD_NONE)
     {
         return;
@@ -205,6 +190,21 @@ void KSSDrone::HandleCommandEvents()
     }
 
     this->last_command_seq_ = cmd.cmd_seq;
+
+    if (cmd.cmd_flags & CMD_EMERGENCY_STOP)
+    {
+        ESP_LOGE(TAG, "EMERGENCY STOP!");
+
+        this->armed_ = false;
+        this->landing_throttle_ = 0.0f;
+        this->throttle_prev_ = 0.0f;
+        this->pid_controller_.ResetIntegrator();
+        this->motor_interface_.SetMotorOutput(0, 0, 0, 0);
+
+        this->ChangeState(DroneState::DISARMED);
+
+        return;
+    }
 
     if (cmd.cmd_flags & CMD_LEVEL_CALIBRATE)
     {

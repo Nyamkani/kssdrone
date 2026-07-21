@@ -28,7 +28,7 @@
 #include <algorithm>
 
 #include "flight_tune_config.h"
-#include "kss_drone_config.h"
+
 
 
 /*
@@ -65,7 +65,15 @@ Landing -> Disarmed
 */
 
 //firmware version
-#define FW_VERSION    1.2f
+#define FW_VERSION    0.5f
+
+//input scaling
+#define MAX_ROLL_RATE_RAD_S   3.0f    // 약 172 deg/s
+#define MAX_PITCH_RATE_RAD_S  3.0f
+#define MAX_YAW_RATE_RAD_S    2.0f    // yaw는 조금 낮게 시작 추천
+
+#define MAX_ROLL_ANGLE_RAD    DEG2RAD(20.0f)
+#define MAX_PITCH_ANGLE_RAD   DEG2RAD(20.0f)
 
 // auto gyro bias calibration
 #define GYRO_BIAS_CALIB_TIME_S        1.0f
@@ -79,12 +87,12 @@ Landing -> Disarmed
 #define IDLE_DSHOT_THRESHOLD 88
 
 //Tilt trigger
-#define TILT_LIMIT_RAD (55.0f * 3.1415926f / 180.0f)  //1.221rad 55deg
+#define TILT_LIMIT_RAD (70.0f * 3.1415926f / 180.0f)  //1.221rad 70deg
 #define TILT_TRIGGER_DT   0.3 //s
 
 //normalize accel
-#define IMU_WRONG_DATA_MIN 0.98f
-#define IMU_WRONG_DATA_MAX 1.02f
+#define IMU_WRONG_DATA_MIN 0.7f
+#define IMU_WRONG_DATA_MAX 1.3f
 
 #define MS_TO_FREQ(x)    ((uint16_t)(1000.0f/(x)))          // Convert frequency to period in miliseconds
 #define FREQ_TO_MS(x)    ((float)(1000.0f/(x)))            // Convert frequency to period in miliseconds
@@ -100,7 +108,7 @@ Landing -> Disarmed
 #define EKF_READY_ACC_MIN       0.9f
 #define EKF_READY_ACC_MAX       1.1f
 
-//landing 
+//landing
 #define SOFT_LANDING_RATE      0.05f
 #define FAILSAFE_LANDING_RATE  0.05f
 #define MAX_LANDING_TIME       30.0f  //30s
@@ -117,90 +125,25 @@ Landing -> Disarmed
 #define BACKGROUND_SLOW_JOB_TIME   0.010f
 #define ARMED_SLOW_COMP_TIME       0.004f
 
-#define COMMAND_TIMEOUT_US    300000LL
-
-//log
-struct ArmedProfileStats
-{
-    uint64_t count = 0;
-
-    int64_t prepare_us = 0;
-    int64_t slow_comp_us = 0;
-    int64_t control_us = 0;
-    int64_t total_us = 0;
-
-    int64_t prepare_max_us = 0;
-    int64_t slow_comp_max_us = 0;
-    int64_t control_max_us = 0;
-    int64_t total_max_us = 0;
-};
-
 struct ArmedContext
 {
-    /*
-     * Command
-     */
     const ControlPacket* cmd = nullptr;
-    bool cmd_valid = false;
-    bool command_updated = false;
 
-    /*
-     * Target / setpoint
-     */
     AttitudeTarget target{};
-    bool target_valid = false;
-
-    /*
-     * IMU
-     */
     IMU_PARESED_DATA imu{};
-    bool imu_valid = false;
-
-    /*
-     * EKF
-     */
     EKFAttitudeInput ekf_input{};
     EKFAttitudeOutput ekf_out{};
-    bool ekf_valid = false;
-    bool estimator_updated = false;
-
-    /*
-     * Control state
-     */
-    // 실제 타입명에 맞게 변경
     AttitudeState state{};
-    bool state_valid = false;
 
-    /*
-     * Control output
-     */
     FlightPIDOutput pid_out{};
+    MixerInput mix_in{};
+    MixerOutput mix_out{};
 
-    /*
-     * Extra
-     */
     float throttle_rate_cmd = 0.0f;
+    float thrust_cmd = 0.0f;
 
-    bool airborne_updated = false;
-};
-
-
-struct ArmedOutputCache
-{
-    float yaw_hover_boost = 1.0f;
-    float yaw_priority_scale = 1.0f;
-
-    float thrust_v_scale = 1.0f;
-    float axis_rp_v_scale = 1.0f;
-    float axis_yaw_v_scale = 1.0f;
-
-    float high_thr_scale = 1.0f;
-    float ground_blend = 1.0f;
-
-    float fl_mul = 1.0f;
-    float fr_mul = 1.0f;
-    float rr_mul = 1.0f;
-    float rl_mul = 1.0f;
+    float final_axis_rp_scale = 1.0f;
+    float final_axis_yaw_scale = 1.0f;
 };
 
 class KSSDrone
@@ -242,65 +185,6 @@ class KSSDrone
 
         //test
         float test_log_dt_ = 0.0f;
-        ArmedProfileStats armed_prof_{};
-
-        /*
-        * Command / target cache
-        */
-        bool armed_cmd_valid_ = false;
-
-        AttitudeTarget armed_target_cache_{};
-        bool armed_target_valid_ = false;
-
-        float armed_throttle_rate_cmd_ = 0.0f;
-        int64_t armed_last_cmd_us_ = 0;
-
-        /*
-        * IMU cache
-        */
-        IMU_PARESED_DATA armed_imu_cache_{};
-        bool armed_imu_valid_ = false;
-
-        /*
-        * EKF / state cache
-        */
-        EKFAttitudeInput armed_ekf_input_cache_{};
-        EKFAttitudeOutput armed_ekf_out_cache_{};
-        bool armed_ekf_valid_ = false;
-
-        // 실제 타입명으로 변경
-        AttitudeState armed_state_cache_{};
-        bool armed_state_valid_ = false;
-
-        /*
-        * Subrate accumulators
-        */
-        float armed_command_dt_accum_ = 0.0f;
-        float armed_estimator_dt_accum_ = 0.0f;
-        float armed_airborne_dt_accum_ = 0.0f;
-        float armed_slow_comp_dt_accum_ = 0.0f;
-
-        /*
-        * output
-        */
-        ArmedOutputCache armed_output_cache_{};
-
-        float armed_output_comp_dt_accum_ = 0.0f;
-        float armed_log_dt_accum_ = 0.0f;
-
-        float armed_control_dt_accum_ = 0.0f;
-        float armed_motor_output_dt_accum_ = 0.0f;
-
-        /*
-        * failsafe
-        */
-        float armed_failsafe_dt_accum_ = 0.0f;
-
-        bool armed_pid_valid_ = false;
-        FlightPIDOutput armed_pid_out_cache_{};
-
-
-        float armed_tilt_safety_dt_accum_ = 0.0f;
 
     private:
         static constexpr float GYRO_LIMIT = 20.0f; // rad/s 
@@ -441,6 +325,9 @@ class KSSDrone
 
         float slow_bg_dt_accum_ = 0.0f;
 
+
+        float armed_slow_comp_dt_accum_ = 0.0f;
+
         float cached_pitch_vel_comp_rad_ = 0.0f;
         float cached_roll_vel_comp_rad_ = 0.0f;
 
@@ -475,22 +362,10 @@ class KSSDrone
         esp_err_t FastBackgroundJobs(const float dt);
         esp_err_t SlowBackgroundJobs(const float dt);
 
-        //armed
-        void LoadArmedContextCache(ArmedContext& ctx);
-        void ResetArmedRuntime();
-
-        esp_err_t ArmedFailsafeFast(float dt);
-        esp_err_t ArmedCommandMedium(float dt, ArmedContext& ctx);
-        esp_err_t ArmedImuFast(float dt, ArmedContext& ctx);
-        esp_err_t ArmedEstimatorMedium(float dt, ArmedContext& ctx);
-        void ArmedAirborneSlow(float dt, ArmedContext& ctx);
-        void ArmedSlowCompUpdate(float dt, ArmedContext& ctx);
-        esp_err_t ArmedControlFast(float dt, ArmedContext& ctx);
+        esp_err_t ArmedPrepareFast(const float dt, ArmedContext& ctx);
+        esp_err_t ArmedControlFast(const float dt, ArmedContext& ctx);
         esp_err_t ArmedOutputFast(const float dt, ArmedContext& ctx);
-        void ArmedOutputCompMedium(const float dt, ArmedContext& ctx);
-        void ArmedTiltSafetyMedium(const float dt, ArmedContext& ctx);
-
-
+        void ArmedSlowCompUpdate(const float dt, ArmedContext& ctx);
         void UpdatePseudoVelocitySlow(const float dt, ArmedContext& ctx);
 
         void UpdateVoltageCompSlow(ArmedContext& ctx);
@@ -502,14 +377,13 @@ class KSSDrone
         void ResetGyroBiasAccumulator();
 
         //imu log
-        // void ResetImuFrameStats();
+        void ResetImuFrameStats();
         void UpdateImuFrameStats(const SharedSnapshotFrame<IMU_PARESED_DATA>& frame, int64_t now_us);
 
         //log
         void UpdateMainLoopStats(float raw_dt_s);
         void TryPrintMainLoopStats();
-        void TryPrintArmedProfileStats();
-        
+
     private:
         void ChangeState(const DroneState to_state);
         void EnterState(const DroneState to_state);
@@ -588,31 +462,4 @@ inline float SmoothStep01(float x)
 static inline int16_t SeqDiff16(uint16_t now, uint16_t prev)
 {
     return static_cast<int16_t>(now - prev);
-}
-
-static inline void UpdateMaxI64(int64_t& max_value, const int64_t value)
-{
-    if (value > max_value)
-    {
-        max_value = value;
-    }
-}
-
-static inline bool ConsumePeriodicDt(
-    float& accum_dt,
-    const float dt,
-    const float period_sec,
-    float& out_dt)
-{
-    accum_dt += dt;
-
-    if (accum_dt < period_sec)
-    {
-        return false;
-    }
-
-    out_dt = accum_dt;
-    accum_dt = 0.0f;
-
-    return true;
 }

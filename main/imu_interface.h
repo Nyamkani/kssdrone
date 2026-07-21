@@ -20,9 +20,6 @@
 #include <cmath>
 #include <atomic>
 
-
-#include "kss_drone_config.h"
-
 #define IMU_DATA_AX_DIR 1.0f
 #define IMU_DATA_AY_DIR 1.0f
 #define IMU_DATA_AZ_DIR 1.0f
@@ -57,7 +54,7 @@
 #define IMU_READ_MODE_FIFO_INTERRUPT      2
 
 #ifndef IMU_READ_MODE
-#define IMU_READ_MODE IMU_READ_MODE_DIRECT
+#define IMU_READ_MODE IMU_READ_MODE_INTERRUPT_LATEST
 #endif
 
 #ifndef IMU_CLEAR_INT_STATUS_AFTER_READ

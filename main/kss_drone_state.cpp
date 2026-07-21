@@ -137,127 +137,29 @@ esp_err_t KSSDrone::Arming(const float dt)
     return ESP_OK;
 }
 
-/*
- * 기존 Armed() 재구성
- */
-
 esp_err_t KSSDrone::Armed(const float dt)
 {
-    if (this->state_ != DroneState::ARMED)
-    {
-        return ESP_OK;
-    }
-
-    esp_err_t ret = ESP_OK;
-
     ArmedContext ctx{};
-    this->LoadArmedContextCache(ctx);
 
-    float failsafe_dt = 0.0f;
-    if (ConsumePeriodicDt(this->armed_failsafe_dt_accum_,
-                        dt,
-                        ARMED_FAILSAFE_PERIOD_SEC,
-                        failsafe_dt))
-    {
-        ret = this->ArmedFailsafeFast(failsafe_dt);
-        if (ret != ESP_OK || this->state_ != DroneState::ARMED)
-        {
-            return ret;
-        }
-    }
-
-    ret = this->ArmedCommandMedium(dt, ctx);
-    if (ret != ESP_OK || this->state_ != DroneState::ARMED)
+    esp_err_t ret = this->ArmedPrepareFast(dt, ctx);
+    if (ret != ESP_OK)
     {
         return ret;
-    }
-
-    ret = this->ArmedImuFast(dt, ctx);
-    if (ret != ESP_OK || this->state_ != DroneState::ARMED)
-    {
-        return ret;
-    }
-
-    ret = this->ArmedEstimatorMedium(dt, ctx);
-    if (ret != ESP_OK || this->state_ != DroneState::ARMED)
-    {
-        return ret;
-    }
-
-    this->ArmedAirborneSlow(dt, ctx);
-    if (this->state_ != DroneState::ARMED)
-    {
-        return ESP_OK;
     }
 
     this->ArmedSlowCompUpdate(dt, ctx);
-    if (this->state_ != DroneState::ARMED)
-    {
-        return ESP_OK;
-    }
 
-    float tilt_dt = 0.0f;
-    if (ConsumePeriodicDt(this->armed_tilt_safety_dt_accum_,
-                        dt,
-                        ARMED_TILT_SAFETY_PERIOD_SEC,
-                        tilt_dt))
+    ret = this->ArmedControlFast(dt, ctx);
+    if (ret != ESP_OK)
     {
-        this->ArmedTiltSafetyMedium(tilt_dt, ctx);
-        if (this->state_ != DroneState::ARMED)
-        {
-            return ESP_OK;
-        }
-    }
-
-    /*
-     * 2kHz PID
-     */
-    float control_dt = 0.0f;
-    if (ConsumePeriodicDt(this->armed_control_dt_accum_,
-                          dt,
-                          ARMED_CONTROL_PERIOD_SEC,
-                          control_dt))
-    {
-        ret = this->ArmedControlFast(control_dt, ctx);
-        if (ret != ESP_OK || this->state_ != DroneState::ARMED)
-        {
-            return ret;
-        }
-    }
-
-    /*
-     * output compensation은 PID 이후에 실행.
-     * ctx.pid_out 또는 armed_pid_out_cache_를 기준으로 계산할 수 있음.
-     */
-    this->ArmedOutputCompMedium(dt, ctx);
-    if (this->state_ != DroneState::ARMED)
-    {
-        return ESP_OK;
-    }
-
-    /*
-     * 1kHz DShot output
-     */
-    float motor_dt = 0.0f;
-    if (ConsumePeriodicDt(this->armed_motor_output_dt_accum_,
-                          dt,
-                          ARMED_MOTOR_OUTPUT_PERIOD_SEC,
-                          motor_dt))
-    {
-        if (this->armed_pid_valid_)
-        {
-            ctx.pid_out = this->armed_pid_out_cache_;
-
-            ret = this->ArmedOutputFast(motor_dt, ctx);
-            if (ret != ESP_OK)
-            {
-                return ret;
-            }
-        }
+        return ret;
     }
 
     return ESP_OK;
 }
+
+
+
 esp_err_t KSSDrone::Landing(const float dt)
 {
     // 0. Emergency / disarm check
@@ -823,9 +725,6 @@ void KSSDrone::EnterState(const DroneState to_state)
             //pid
             this->pid_controller_.Reset();
             this->output_saturated_ = false;
-
-            this->ResetArmedRuntime();
-
             //ekf
             this->ekf_.Reset();
             this->ekf_ready_ = false;
@@ -849,8 +748,6 @@ void KSSDrone::EnterState(const DroneState to_state)
             break;
 
         case DroneState::ARMED:
-            this->ResetArmedRuntime();
-
             this->armed_ = true;
             this->pid_controller_.Reset();
             this->motor_interface_.Arm();
