@@ -1,0 +1,1100 @@
+
+#260401
+1. remove 1k ohm(R7) 
+
+2. Channel for console output -> "select USB Serial/JTAG Controller"
+
+#260402
+1. disarm -> arming -> armed automatically. because, controller has no changed.
+
+2. initiailize imu bias
+
+3. pid control by throttle
+
+
+
+#memo
+Roll (X축 회전): 오른쪽 날개가 내려가는 방향 (오른쪽으로 기우뚱). roll <> pitch
+Pitch (Y축 회전): 기수(Nose)가 위로 들리는 방향 (상승).
+Yaw (Z축 회전): 기수가 오른쪽으로 회전하는 방향. 
+
+
+#260403
+1. gyro/level calibration, imu comm.
+
+
+#260410
+1. BLheli_s config (suite) arduino uno -> m1~m4 -> d11 ~d8, 5v-rst short needed
+2. arming delay 1s->2s
+3. imu coordinate change 
+
+#240413
+1. Mode change only in disamred Mode
+2. compensate throttle 
+
+
+#260414
+1. add landing state(fail + soft )
+
+
+GPIO 구동 능력(Drive Strength) 설정: 모든 핀에 GPIO_DRIVE_CAP_3를 적용하면
+(gpio_set_drive_capability((gpio_num_t)3, GPIO_DRIVE_CAP_3); )
+3.3V 신호의 파형 끝(Edge)이 더 날카로워져서,
+ 47옴 저항 뒤에 있는 ESC가 신호를 인식하는 성공률이 크게 올라갈 것입니다.
+
+1ms 루프 (1kHz): 1ms 단위로 모터 값을 업데이트하신다면 사실 DShot600(약 27us 전송)은 오버스펙에 가깝습니다.
+ 즉, 통신 속도는 매우 빠른데 업데이트는 그보다 훨씬 천천히 일어나는 구조입니다. 
+ 이 경우 신호 품질이 조금만 나빠도 1ms라는 소중한 제어 주기 내에서 유효한 데이터 전송이 실패할 확률이 높습니다.
+
+RMT 타이밍 미세 조정: 만약 드라이브 강도를 높여도 비프음이 지연된다면,
+ RMT 비트 설정에서 High 구간(duration_high)을 1~2틱 정도 늘려서 저항에 의한 전압 상승 지연을 보상해 보시기 바랍니다.
+
+DShot300의 가치: 1ms 루프타임 환경이라면 DShot300(약 54us 전송)으로도 충분히 실시간 제어가 가능합니다.
+ 만약 앞의 조치들로도 비프음 동기화가 안 된다면,
+  비행 안정성을 위해 신호 신뢰도가 높은 DShot300을 적극 고려해 보세요.
+
+
+
+        // level offsets
+        float roll_offset_rad_ = 0.0f;
+        float pitch_offset_rad_ = 0.0f;
+
+        float roll_trim_rad_ = 0.0005f;     //
+        float pitch_trim_rad_ = 0.00f;   //
+
+        // mix offset
+        static constexpr float PITCH_HW_TRIM = 0.00f;
+        //output abs. value
+        static constexpr float BASE_ROLL_MIX_OFFSET = 0.00f;//-0.001f;
+        static constexpr float BASE_PITCH_MIX_OFFSET = 0.0003f;//0.012f;
+
+#define ROLL_RATE_P 0.025f    //0.08~0.12
+#define ROLL_RATE_I 0.00f    //0.04~0.88
+#define ROLL_RATE_D 0.00f   //0.001 ~ 0.003
+
+#define PITCH_RATE_P 0.035f   //0.08~0.12
+#define PITCH_RATE_I 0.003f   //0.04~0.88
+#define PITCH_RATE_D 0.001f  //0.001 ~ 0.003
+
+#define YAW_RATE_P 0.04f    //0.05~0.1
+#define YAW_RATE_I 0.000f     //0.01~0.05
+#define YAW_RATE_D 0.000f    //0.000~0.002
+
+
+#define ROLL_ANGLE_P 3.0f     //4.0~6.0
+#define ROLL_ANGLE_I 0.0f     //0.0~0.1
+#define ROLL_ANGLE_D 0.0f     //0.0~0.
+
+#define PITCH_ANGLE_P 3.0f    //4.0~6.0
+#define PITCH_ANGLE_I 0.0f    //0.0~0.1
+#define PITCH_ANGLE_D 0.0f    //0.0~0
+
+#define YAW_ANGLE_P 0.0f      //0.0~0.1
+#define YAW_ANGLE_I 0.0f      //0.0~0.05
+#define YAW_ANGLE_D 0.0f      //0.0~0.
+
+// 3) TPA (Throttle PID Attenuation)
+#define TPA_BREAKPOINT             0.35f   // start reducing above 60% throttle
+#define TPA_RATE_RP                0.0f//0.45f   // roll/pitch attenuation strength
+#define TPA_RATE_YAW               0.0f//0.15f   // yaw attenuation strength
+
+
+#260509
+amred 구조
+1. Command / Safety / Target / Flight State
+   - command validity
+   - failsafe checks
+   - target build
+   - throttle ramp
+   - airborne state update
+
+2. Sensor / EKF / State Estimation
+   - IMU read
+   - LPF
+   - EKF predict/update
+   - attitude state
+   - vertical velocity estimator
+   - tilt safety
+
+3. Attitude Control
+   - PID update
+   - auto trim
+   - PID output limit
+   - PID authority scaling
+   - TPA
+
+4. Thrust Control
+   - thrust curve
+   - voltage compensation calculation
+   - vertical damping thrust correction
+
+5. Mixer / Output Shaping / Motor Output
+   - fixed mixer bias
+   - axis voltage scale application
+   - motor mix
+   - ground blend
+   - average correction
+   - normalization
+   - DSHOT output
+
+6. Telemetry / Logging
+
+
+[통신]
+ESP-NOW controller ↔ FC
+패킷 수신
+failsafe 구조
+
+[센서]
+IMU SPI
+자세 추정
+EKF/필터
+
+[제어]
+Roll control
+Pitch control
+Yaw control
+Throttle
+Mixer
+DShot
+
+[비행]
+실제 이륙
+호버
+상승/하강
+Yaw 유지 일부
+VZ 보정 일부
+
+[RTOS]
+1kHz task
+50Hz 구조 버그 수정
+
+////////////////////////////
+지금 이렇게 커지니까 오히려, 회전이 강해진것같습니다. 아니, 좀 뭔가 정제된것같으면서도, 혼란스럽습니다. 잠깐 다시 상황을 정리해보죠. 1. 기체 특성(기본 하드웨어 상태) -> pid를 적용안하고, bias 및 trim을 기본으로 주면, 5시 방향으로 약간의 ccw로 방향으로 회전하면서 상승 2. trim/bias 적용 후 // mixer bias #define FRONT_THRUST_BIAS 0.980f//0.985f #define REAR_THRUST_BIAS 1.020f//1.015f #define LEFT_THRUST_BIAS 1.000f//0.985f 1.007 #define RIGHT_THRUST_BIAS 1.000f//1.015f 0.993 // designated trim float roll_manual_trim_rad_ = DEG2RAD(-0.20f); //trim-- -> roll(-) float pitch_manual_trim_rad_ = DEG2RAD(1.50f); //trim-- -> pitch(-) ->믹서는 앞뒤로 4퍼센트(물론 trim을 제외한, bias로만 잡으려면 더 크게 잡아야함, 8~ 10프로 차이 예상), trim은 최대 1.5도로 줘야 pitch가 빠르게 뒤로(6시방향)가면서 상승하지 않음, 물론 지금 값도 뒤로 상승함. roll은 yaw회전이 너무 심해서 판단 불가,(5시방향 -> roll을 어떤 방향을 줘야할지 판단 안됨) 3. pid 적용 후 -> pid를 적용하면, 어느정도 억제 하는것은 분명함. 그러나 값을 크게해도 잡지 못함. 사실 어떻게든bias/trim을 세부적(0.00x)단위로 잡으면 잡힐 수 는 있다고 생각함, 그러나, 배터리 위치가 조금이라도 변경하면 바로 다시 맞춰야함. 무엇보다, ccw를 전혀 잡지 못하고 있음. 4. (어제) pid authority, output(mixer) authority 재설정 -> throttle 위치를 조정했으나, 근본적인 ccw 회전( 지면 및 공중 모두) 잡지 못하고 있음. 5. yaw feed-forward 적용 -> 별차이 못느낌, 아마 부호가 잘못되었을 가능성 큼 float yaw_ff = 0.0f; float yaw_thrust_ff = 0.0015f; if (throttle_rate_cmd > 0.0f) { yaw_ff = throttle_rate_cmd * yaw_thrust_ff; } yaw_ff = std::clamp(yaw_ff, -0.010f, 0.0f); mix_in.yaw += yaw_ff; -> cw로 가려면 mix_in.yaw에 - 값이 추가해야하나, 현재 -0.010~0.0f가 한계임. -> 하지만 무엇보다, 소프트웨어에서 벗어나는 값(일반적인 센서기반 계산이 아닌, 아웃풋 보정용 계산이라, 후에 어떤 일이 벌어질지 모름 위 내용 정리 해봤습니다. 결국 지금 최우선은 ccw회전 방지입니다. 사실 말하면, 같은 부품에, 비슷한 무게에, 거의 가운데의 무게 중심(cog)인데 ccw회전 이유를 도저히 모르겠습니다.
+
+airmode                  ↔ is_airborne / preair_throttle / ground_blend
+anti-gravity             ↔ is_airborne 기반 authority 관리
+throttle PID attenuation ↔ TPA
+dynamic idle             ↔ 아직 없음
+motor output limiting    ↔ limit
+yaw authority management ↔ preair yaw scale / is_airborne yaw 제한
+notch/gyro filtering     ↔ LPF
+
+자작 FC 설계
+ESP32-S3 기반 1kHz 제어
+DShot 출력
+IMU/EKF/PID 직접 구현
+ESP-NOW 컨트롤러 직접 제작
+믹서/안전/arming/telemetry 직접 구성
+프레임/모터/프롭/배터리 개별 조합
+COG/추력 중심 직접 찾기
+실내 2m급 공간에서 실제 비행 제어
+
+
+HandleCommandEvents()
+- CMD_ARM_REQUEST 수신 → armed_ = true
+- CMD_DISARM_REQUEST 수신 → armed_ = false
+- CMD_SOFT_LANDING 수신 → soft_landing_requested_ = true
+- CMD_EMERGENCY_STOP 수신 → emergency_stop_requested_ = true 또는 즉시 정지
+
+Disarmed()
+- armed_ == true
+- ekf_ready_
+- imu_bias_ready_
+- disarmed_settle_dt_ 조건
+→ ARMING
+
+Arming()
+- armed_ == true 유지
+- throttle low
+- arming_check_dt_ > 2s
+→ ARMED
+- armed_ == false 또는 timeout
+→ DISARMED
+
+Armed()
+- armed_ == false
+→ LANDING(SOFT) 또는 정책에 따라 LANDING
+- soft_landing_requested_
+→ LANDING(SOFT)
+- timeout
+→ LANDING(FAILSAFE)
+- emergency_stop_requested_
+→ DISARMED / motor stop
+
+Landing()
+- landing_throttle_ 감소
+- 완료 시 DISARMED
+
+#0624
+1. ARMED 제어 루프
+
+1.1 1kHz fast path
+- failsafe / command timeout 확인
+- 명령 확인 및 target 생성
+- throttle ramp / target slew
+- IMU 데이터 가져오기
+- IMU LPF
+- EKF Predict / Update
+- yaw hold 처리
+- PID
+- mixer
+- DShot / motor output
+- 즉시 필요한 제어 보정 적용
+
+1.2 250Hz slow compensation
+- body accel → world accel 변환
+- pseudo velocity 추정
+- horizontal drift compensation 계산
+- vertical velocity 추정
+- voltage compensation scale 갱신
+- auto trim 누적/갱신
+
+1.3 다시 1kHz output fast path
+- slow compensation의 cached 값 적용
+- PID output 보정
+- yaw priority / hover yaw boost
+- thrust curve
+- voltage cached scale 적용
+- vertical damping 적용
+- motor mix / normalize
+- DShot 출력
+
+그리고 background 쪽은:
+
+2. BackgroundJobs
+
+2.1 FastBackgroundJobs, 1kHz
+- command cache 갱신
+- command event 처리
+- arm/disarm/landing/emergency 관련 즉시 반응
+
+2.2 SlowBackgroundJobs, 100Hz
+- battery monitor update
+- telemetry 전송
+- log 전송 조건 처리
+- LED update
+- 기타 느린 상태 체크
+
+결과적으로 구조는 이렇게 된 것입니다.
+
+MainLoop 1kHz
+ ├─ State function
+ │   └─ ARMED
+ │       ├─ ArmedPrepareFast()       1kHz
+ │       ├─ ArmedSlowCompUpdate()    250Hz
+ │       ├─ ArmedControlFast()       1kHz
+ │       └─ ArmedOutputFast()        1kHz
+ │
+ ├─ FastBackgroundJobs()             1kHz
+ ├─ SlowBackgroundJobs()             100Hz
+ └─ WDT guard
+
+
+
+ Rev1.2
+- 현재 안정 기준 펌웨어
+- FIFO_INTERRUPT 보류/비활성화
+- IMU 기준:
+  1순위: INTERRUPT_LATEST
+      ODR 8kHz
+      INT_CONFIG1 = 0x60
+      UI_DRDY interrupt
+      DIV 8로 약 1kHz publish
+  2순위: DIRECT_READ
+      센서는 8kHz 설정
+      MainLoop에서 1kHz로 최신 register read
+- MainLoop 주기: 기존 1kHz 유지
+
+유지:
+  recv callback → xQueueOverwriteFromISR()
+  espnow task → xQueueReceive()
+
+변경:
+  espnow task의 atomic double-buffer write
+  → SharedSnapshot<ControlPacket>.Write()
+
+main task:
+  atomic-read
+  → SharedSnapshot<ControlPacket>.Read()
+
+
+rev1.2-2
+2kHz fast:
+  IMU read
+  EKF / attitude update
+  rate PID / angle PID
+  mixer
+  motor output
+
+500Hz medium:
+  command read/cache
+  arm/disarm/landing command
+  target angle/rate/throttle update
+  stick slew / throttle ramp
+
+250Hz slow:
+  software compensation
+  trim / pseudo velocity / drift compensation
+
+100Hz slow background:
+  telemetry
+  battery
+  logs
+  non-critical safety
+
+  매 루프, 2kHz/4kHz:
+  1. 매우 가벼운 failsafe check
+  3. IMU 수신 + gyro/acc 1차 LPF
+  rate PID
+  mixer/output
+
+500Hz:
+  2. command packet 변환 + slew/ramp/limit
+  angle target / rate target 생성
+
+500Hz~1000Hz:
+  4. EKF 자세 추정
+
+100Hz~250Hz:
+  5. airborne 상태 계측
+  soft compensation
+  ground/airborne 판단
+
+  ArmedControlFast()           매 loop, 2kHz
+  - 최신 gyro 반영
+  - slow comp 적용
+  - tilt check
+  - PID update
+
+ArmedOutputCompMedium()      250~500Hz
+  - voltage scale 계산
+  - yaw hover boost 계수 계산
+  - yaw priority scale 계산 일부
+  - high throttle scale 계산
+  - ground blend 계산
+  - motor bias multiplier 계산
+  - 기타 보정 계수 cache
+
+ArmedOutputFast()            매 loop, 2kHz
+  - cached coefficient 적용
+  - mixer
+  - DShot 변환
+  - SetMotorOutput
+
+
+  좋습니다. 현재 로그는 여기서 멈춰도 될 수준입니다.
+
+```text id="hl4rfq"
+ARMED:
+  hz ≈ 1894~1909
+  avg ≈ 0.524~0.528ms
+  imu age ≈ 3.5us
+  over5/over10 = 0
+```
+
+로그/프로파일을 줄이면 말씀대로 `1900Hz 근처`는 유지될 가능성이 큽니다.
+이제 성능보다 **구조 이해**가 더 중요합니다.
+
+---
+
+# 1. 현재 구조의 핵심 변화
+
+처음에는 `Armed()` 안에서 사실상 이런 구조였습니다.
+
+```text id="2rm6xk"
+Armed()
+  prepare 전부
+  slow comp 전부
+  PID 전부
+  output 전부
+```
+
+즉 매 loop마다 너무 많은 일을 했습니다.
+
+지금은 이렇게 바뀐 상태입니다.
+
+```text id="tmgjxf"
+Armed()
+  2kHz급:
+    IMU
+    PID
+
+  1kHz:
+    DShot output
+
+  500Hz:
+    command
+    EKF
+    failsafe
+    tilt safety
+
+  250Hz 이하:
+    airborne
+    soft comp
+    output comp
+    log
+```
+
+즉 “시간에 따른 함수 실행”이라기보다 정확히는:
+
+```text id="jjm525"
+각 함수마다 원하는 실행 주기를 가지고,
+dt_accum_으로 실행 시점을 결정하는 구조
+```
+
+입니다.
+
+예:
+
+```cpp id="4p4k6h"
+float armed_command_dt_accum_ = 0.0f;
+float armed_estimator_dt_accum_ = 0.0f;
+float armed_motor_output_dt_accum_ = 0.0f;
+```
+
+이 변수들은 **데이터 저장용 cache가 아닙니다.**
+
+얘네는 단순히:
+
+```text id="8gdl8j"
+"이 함수가 마지막으로 실행된 뒤 시간이 얼마나 지났는가?"
+```
+
+를 기억하는 **스케줄러용 시간 누적값**입니다.
+
+---
+
+# 2. `cache`와 `ArmedContext ctx{}`의 차이
+
+이게 제일 중요합니다.
+
+## 짧게 말하면
+
+```text id="dfzeox"
+멤버 cache:
+  loop와 loop 사이에 살아남는 값
+
+ArmedContext ctx:
+  이번 Armed() 한 번 안에서만 쓰는 임시 작업 공간
+```
+
+입니다.
+
+---
+
+## 멤버 cache
+
+예를 들어 이런 값들입니다.
+
+```cpp id="lp35pz"
+AttitudeTarget armed_target_cache_{};
+bool armed_target_valid_ = false;
+
+IMU_PARESED_DATA armed_imu_cache_{};
+bool armed_imu_valid_ = false;
+
+EKFAttitudeOutput armed_ekf_out_cache_{};
+AttitudeState armed_state_cache_{};
+bool armed_state_valid_ = false;
+
+FlightPIDOutput armed_pid_out_cache_{};
+bool armed_pid_valid_ = false;
+```
+
+이 값들은 `KSSDrone` 객체의 멤버입니다.
+따라서 `Armed()`가 끝나도 사라지지 않습니다.
+
+즉 다음 loop에서도 남아 있습니다.
+
+```text id="7snzhm"
+loop 100에서 계산한 target
+→ loop 101, 102에서도 사용 가능
+
+loop 100에서 계산한 EKF state
+→ estimator가 쉬는 loop 101에서도 사용 가능
+```
+
+이게 cache의 역할입니다.
+
+---
+
+## `ArmedContext ctx{}`
+
+반면 이건 `Armed()` 함수 안에서 매번 새로 만들어지는 지역 변수입니다.
+
+```cpp id="diwhd4"
+esp_err_t KSSDrone::Armed(const float dt)
+{
+    ArmedContext ctx{};
+    this->LoadArmedContextCache(ctx);
+
+    ...
+}
+```
+
+`ctx`는 이번 loop 안에서만 존재합니다.
+
+```text id="h4auqk"
+Armed() 진입
+  ctx 생성
+  cache에서 현재값 복사
+  이번 loop 함수들이 ctx를 읽고/수정
+Armed() 종료
+  ctx 사라짐
+```
+
+즉 `ctx`는 **영구 저장소가 아닙니다.**
+
+---
+
+# 3. 왜 둘 다 필요한가?
+
+subrate 구조에서는 어떤 함수는 매 loop 돌고, 어떤 함수는 가끔만 돕니다.
+
+예를 들어:
+
+```text id="pm5748"
+PID:      2kHz
+Command: 500Hz
+EKF:     500Hz
+DShot:   1kHz
+```
+
+그러면 2kHz PID는 매 loop마다 target과 attitude state가 필요합니다.
+하지만 target은 command 함수가 500Hz로만 갱신합니다.
+
+따라서 command 함수가 안 도는 loop에서도 PID가 target을 써야 합니다.
+
+이때 필요한 것이 cache입니다.
+
+```text id="5ixb06"
+CommandMedium 실행됨:
+  새 target 계산
+  ctx.target 갱신
+  armed_target_cache_ 갱신
+
+CommandMedium 실행 안 됨:
+  LoadArmedContextCache()가
+  armed_target_cache_를 ctx.target에 복사
+```
+
+그래서 PID는 항상 이렇게 볼 수 있습니다.
+
+```cpp id="n4riit"
+if (!ctx.target_valid || !ctx.state_valid || !ctx.imu_valid)
+{
+    return ESP_OK;
+}
+```
+
+즉 `ctx` 입장에서는 command가 이번 loop에 돌았는지 아닌지 몰라도 됩니다.
+항상 “현재 사용할 수 있는 최신값”이 들어있게 만드는 구조입니다.
+
+---
+
+# 4. 비유하면
+
+```text id="mzwfmp"
+멤버 cache:
+  전역 게시판 / 저장소
+
+ArmedContext ctx:
+  이번 loop에서 쓰려고 책상 위에 복사해 둔 작업지
+
+dt_accum_:
+  각 작업을 언제 할지 알려주는 타이머
+```
+
+입니다.
+
+---
+
+# 5. 데이터 흐름 예시
+
+## Command target
+
+```text id="wbrqbu"
+ArmedCommandMedium() 500Hz
+  active_cmd_ 읽음
+  target 계산
+  ctx.target 갱신
+  armed_target_cache_ 갱신
+```
+
+왜 cache가 필요한가?
+
+```text id="04rpsy"
+PID는 2kHz인데 command는 500Hz라서,
+command가 쉬는 3개의 loop에서도 target이 필요함
+```
+
+---
+
+## IMU
+
+```text id="mddazk"
+ArmedImuFast() 2kHz
+  IMU 직접 read
+  LPF 적용
+  ctx.imu 갱신
+  armed_imu_cache_ 갱신
+```
+
+IMU는 거의 매 loop 새로 읽기 때문에 cache 중요도가 낮아 보일 수 있습니다.
+그래도 estimator나 output이 skip되는 loop, 또는 순서상 다른 함수가 최신 IMU를 써야 하므로 cache를 유지하는 게 좋습니다.
+
+---
+
+## EKF / state
+
+```text id="rq85mz"
+ArmedEstimatorMedium() 500Hz
+  ctx.imu 사용
+  EKF predict/update
+  attitude state 계산
+  ctx.state 갱신
+  armed_state_cache_ 갱신
+```
+
+EKF가 안 도는 loop에서는:
+
+```text id="p9me4y"
+LoadArmedContextCache()
+  이전 EKF state를 ctx.state로 복사
+```
+
+그리고 PID 직전에 gyro만 최신 IMU로 덮어씁니다.
+
+```cpp id="vnv49h"
+ctx.state.gyro_x_rad_s = ctx.imu.gx_rad_s;
+ctx.state.gyro_y_rad_s = ctx.imu.gy_rad_s;
+ctx.state.gyro_z_rad_s = ctx.imu.gz_rad_s;
+```
+
+이 구조가 중요합니다.
+
+```text id="n86xzj"
+roll/pitch angle:
+  500Hz EKF 값 사용
+
+gyro rate:
+  2kHz 최신 IMU 값 사용
+```
+
+그래서 EKF를 500Hz로 낮춰도 rate PID는 최신 gyro를 봅니다.
+
+---
+
+## PID output
+
+```text id="ocnlig"
+ArmedControlFast() 2kHz
+  ctx.target
+  ctx.state
+  ctx.imu
+  사용해서 PID 계산
+
+  ctx.pid_out 갱신
+  armed_pid_out_cache_ 갱신
+```
+
+왜 PID cache가 필요한가?
+
+DShot output은 1kHz입니다.
+즉 PID는 2번 계산되고, motor output은 그중 최신 PID 결과를 사용합니다.
+
+```text id="frit3b"
+loop A:
+  PID 계산
+  DShot 출력
+
+loop B:
+  PID 계산
+  DShot 출력 안 함
+
+loop C:
+  PID 계산
+  DShot 출력
+```
+
+DShot 출력 함수는 항상 최신 PID 결과를 쓰면 됩니다.
+
+```cpp id="mxdnhw"
+ctx.pid_out = this->armed_pid_out_cache_;
+this->ArmedOutputFast(motor_dt, ctx);
+```
+
+---
+
+# 6. cache와 ctx의 규칙
+
+이 규칙으로 보면 됩니다.
+
+## 규칙 1
+
+**다음 loop에서도 필요한 값은 멤버 cache에 저장한다.**
+
+예:
+
+```text id="l3h2sq"
+target
+imu
+ekf output
+attitude state
+pid output
+throttle_rate_cmd
+```
+
+---
+
+## 규칙 2
+
+**이번 loop 안에서 뒤쪽 함수가 바로 써야 하는 값은 ctx에도 넣는다.**
+
+예:
+
+```cpp id="8orhgx"
+ctx.target = target;
+ctx.target_valid = true;
+
+this->armed_target_cache_ = target;
+this->armed_target_valid_ = true;
+```
+
+둘 다 하는 이유는:
+
+```text id="c59qxv"
+ctx:
+  이번 loop의 뒤 함수가 바로 사용
+
+cache:
+  다음 loop들이 사용
+```
+
+입니다.
+
+---
+
+## 규칙 3
+
+**ctx에만 넣고 cache에 안 넣으면, 다음 loop에서 사라진다.**
+
+예를 들어 command 함수에서 이렇게만 하면:
+
+```cpp id="risljs"
+ctx.target = target;
+ctx.target_valid = true;
+```
+
+이번 loop에서는 잘 됩니다.
+하지만 다음 loop에서 command가 안 돌면 target이 없어집니다.
+
+따라서 subrate output은 보통 cache도 같이 갱신해야 합니다.
+
+---
+
+## 규칙 4
+
+**cache에만 넣고 ctx에 안 넣으면, 이번 loop 뒤 함수가 최신값을 못 본다.**
+
+예:
+
+```cpp id="6d4f3m"
+this->armed_target_cache_ = target;
+this->armed_target_valid_ = true;
+```
+
+이렇게만 하면 다음 loop에서는 보이지만, 이번 loop의 PID는 아직 예전 `ctx.target`을 볼 수 있습니다.
+
+그래서 보통은 둘 다 합니다.
+
+```cpp id="pym7po"
+ctx.target = target;
+ctx.target_valid = true;
+
+this->armed_target_cache_ = target;
+this->armed_target_valid_ = true;
+```
+
+---
+
+# 7. 현재 구조를 표로 보면
+
+| 데이터               |                          생성 함수 |     실행 주기 |  cache 필요 |                ctx 필요 |
+| ----------------- | -----------------------------: | --------: | --------: | --------------------: |
+| command           | ESP-NOW callback / active_cmd_ |     외부 수신 |     이미 멤버 |               포인터로 참조 |
+| target            |         `ArmedCommandMedium()` | 250~500Hz |        필요 |                    필요 |
+| throttle_rate_cmd |         `ArmedCommandMedium()` | 250~500Hz |        필요 |                    필요 |
+| imu               |               `ArmedImuFast()` |      2kHz |    있으면 좋음 |                    필요 |
+| ekf_out           |       `ArmedEstimatorMedium()` |     500Hz |        필요 |                    필요 |
+| state angle       |       `ArmedEstimatorMedium()` |     500Hz |        필요 |                    필요 |
+| latest gyro       |               `ArmedImuFast()` |      2kHz | imu cache | PID 직전 ctx.state에 덮어씀 |
+| pid_out           |           `ArmedControlFast()` |      2kHz |        필요 |                    필요 |
+| motor dshot       |            `ArmedOutputFast()` |      1kHz |        선택 |          output 직전 사용 |
+
+---
+
+# 8. `LoadArmedContextCache(ctx)`의 의미
+
+이 함수는 매 loop 시작 시점에 이렇게 하는 역할입니다.
+
+```text id="gjbjvg"
+"지난 loop들에서 만들어진 최신 cache를
+ 이번 loop의 ctx에 깔아준다"
+```
+
+예:
+
+```cpp id="wsai67"
+void KSSDrone::LoadArmedContextCache(ArmedContext& ctx)
+{
+    if (this->armed_target_valid_)
+    {
+        ctx.target = this->armed_target_cache_;
+        ctx.target_valid = true;
+    }
+
+    if (this->armed_imu_valid_)
+    {
+        ctx.imu = this->armed_imu_cache_;
+        ctx.imu_valid = true;
+    }
+
+    if (this->armed_state_valid_)
+    {
+        ctx.state = this->armed_state_cache_;
+        ctx.state_valid = true;
+    }
+
+    if (this->armed_pid_valid_)
+    {
+        ctx.pid_out = this->armed_pid_out_cache_;
+    }
+
+    ctx.throttle_rate_cmd = this->armed_throttle_rate_cmd_;
+}
+```
+
+이게 없으면 subrate 구조가 깨집니다.
+
+왜냐하면 command/EKF/output comp가 안 도는 loop에서는 `ctx`가 비어 있기 때문입니다.
+
+---
+
+# 9. `Armed()`의 현재 이상적인 흐름
+
+개념적으로는 이렇게 됩니다.
+
+```cpp id="978pe4"
+esp_err_t KSSDrone::Armed(const float dt)
+{
+    ArmedContext ctx{};
+    this->LoadArmedContextCache(ctx);
+
+    /*
+     * 2kHz
+     */
+    this->ArmedImuFast(dt, ctx);
+
+    /*
+     * 500Hz / 250Hz 계열
+     */
+    this->ArmedFailsafeMedium(dt, ctx);
+    this->ArmedCommandMedium(dt, ctx);
+    this->ArmedEstimatorMedium(dt, ctx);
+    this->ArmedTiltSafetyMedium(dt, ctx);
+    this->ArmedAirborneSlow(dt, ctx);
+    this->ArmedSlowCompUpdate(dt, ctx);
+    this->ArmedOutputCompMedium(dt, ctx);
+
+    /*
+     * 2kHz PID
+     */
+    if (RunControlPeriod(dt))
+    {
+        this->ArmedControlFast(control_dt, ctx);
+    }
+
+    /*
+     * 1kHz motor output
+     */
+    if (RunMotorPeriod(dt))
+    {
+        ctx.pid_out = this->armed_pid_out_cache_;
+        this->ArmedOutputFast(motor_dt, ctx);
+    }
+
+    return ESP_OK;
+}
+```
+
+실제 순서는 약간 조정 가능합니다.
+하지만 원칙은 이겁니다.
+
+```text id="yh3stv"
+1. ctx는 cache로 초기화
+2. 이번 loop에서 새로 계산한 값은 ctx와 cache 둘 다 갱신
+3. 뒤 함수는 ctx를 사용
+4. 다음 loop는 cache를 사용
+```
+
+---
+
+# 10. 흔한 실수
+
+## 실수 1: ctx를 저장하려고 함
+
+하면 안 됩니다.
+
+```cpp id="zctjzk"
+// 나쁜 예
+this->ctx_ptr_ = &ctx;
+```
+
+`ctx`는 `Armed()`가 끝나면 사라지는 stack 변수입니다.
+
+---
+
+## 실수 2: valid flag 없이 값 사용
+
+항상 이런 체크가 필요합니다.
+
+```cpp id="i00vca"
+if (!ctx.target_valid || !ctx.state_valid || !ctx.imu_valid)
+{
+    return ESP_OK;
+}
+```
+
+subrate 구조에서는 “이번 loop에 그 함수가 안 돌았다”가 정상 상황입니다.
+따라서 valid flag가 중요합니다.
+
+---
+
+## 실수 3: cache만 갱신하고 ctx를 안 갱신
+
+이번 loop에서 뒤쪽 함수가 최신값을 못 봅니다.
+
+---
+
+## 실수 4: ctx만 갱신하고 cache를 안 갱신
+
+다음 loop에서 값이 사라집니다.
+
+---
+
+# 결론
+
+정리하면 이렇습니다.
+
+```text id="3g0x0c"
+armed_*_dt_accum_:
+  함수 실행 주기를 만들기 위한 시간 누적기
+
+멤버 cache:
+  subrate 함수 결과를 다음 loop에서도 쓰기 위한 영구 저장소
+
+ArmedContext ctx:
+  이번 Armed() 한 번 동안만 사용하는 작업용 snapshot/bus
+```
+
+가장 중요한 문장은 이것입니다.
+
+```text id="6lmx6m"
+cache는 loop 사이를 연결하고,
+ctx는 이번 loop 안의 함수들을 연결한다.
+```
+
+이렇게 이해하면 됩니다.
+
+
+Rev1.1 목표:
+  1. 기존 1kHz 제어 루프 개선
+  2. 2kHz~4kHz급 고속 루프 실험
+  3. IMU notify 기반 fast loop 검토
+  4. DShot600 / 출력 주기 검증
+  5. TPA / PD / 필터 튜닝
+  6. 실내 hover 안정성 향상
+
+기존:
+  1kHz main control loop
+
+실험:
+  2kHz급 loop
+  4kHz IMU notify 기반 loop
+
+Armed() 내부 slow 작업 비용
+Fast loop starvation
+WDT 발생 가능성
+task notify/context-switch jitter
+
+control loop:
+  더 빠르게
+
+motor output:
+  DShot 주기에 맞춰 별도 제한
+
+
+TPA:
+  throttle이 올라갈수록 PID 반응 조절
+
+PD:
+  고 throttle / 고출력 영역에서 흔들림 억제 시도
+
+LPF:
+  gyro / accel / D-term 계열 필터 조정
+
+TPA:
+  throttle이 올라갈수록 PID 반응 조절
+
+PD:
+  고 throttle / 고출력 영역에서 흔들림 억제 시도
+
+LPF:
+  gyro / accel / D-term 계열 필터 조정
+
+FC Rev1.1 Summary
+
+Rev1.1은 Rev1.0 기반의 고속 제어 실험 버전이다.
+1kHz 제어 루프를 넘어 2kHz~4kHz급 fast loop, IMU notify 기반 루프, DShot 출력 주기 분리, TPA/PD/LPF/PID 조합을 실험했다.
+
+4kHz IMU notify 통합 루프는 Armed() 내부 slow 처리 비용과 task starvation, WDT 위험으로 인해 기존 안정 구조보다 나쁜 결과를 보였고, 최종적으로 보류했다.
+
+Rev1.1은 실내 hover 안정화 가능성을 보였지만, 배터리 위치 민감도, 1.5~2m 부근 흔들림, yaw drift, EKF accel/bias update 오염 문제는 남아 있었다.
+
+이 버전의 핵심 성과는 고속 루프 자체보다, 제어 루프와 출력 루프 분리 필요성, task 구조의 중요성, PID만으로 해결되지 않는 자세추정 문제를 확인한 것이다.
+
+Rev1.2는 Rev1.1의 실험 결과를 바탕으로 EKF 안정화, PID 주기 정상화, 모드별 입력 authority 정리, tilt safety까지 포함한 완전한 업그레이드 버전이다.
+
+rev1.2 summary
+- 2 kHz class flight control loop stabilized
+- EKF airborne accel update restricted
+- Online gyro bias update disabled during flight
+- Indoor stable PID profile fixed
+- ANGLE_SELF_LEVEL: strong leveling / indoor control
+- RATE_ACRO: fast manual response preserved
+- Battery position sensitivity greatly reduced
+- Tilt guard/failsafe configured
+- Ready for optical flow / range sensor expansion
+- Ready for separate speed profile tuning
+
+preparing rev1.3
+1. DShot 저항 제거/쇼트 위치 확인
+2. 5V 2.2Ω 제거/쇼트 위치 확인
+3. ESP32-S3 하단 GPIO39/40/41/42 납땜 위치 확인
+4. ELRS UART 배선 위치 결정
+5. MTF-02P UART 배선 위치 결정
+6. Fyujon / 카메라 5V, GND, VIDEO 배선 결정
+7. VTX/카메라 전원 경로 확인
+8. 쇼트 후 5V-GND 저항 측정 계획
+
+ESP-NOW → ELRS/CRSF 전환
+RX 0x16, 0x14
+TX 0x08, 0x21
+ARM/DISARM, MODE, KILL 처리
+공중 및 착륙 중 일반 DISARM 방지
+CH7 emergency shutdown
+CRSF snapshot timeout 및 sequence 처리
+Battery 상태 누적시간과 telemetry 갱신 수정
+정규화 스틱 입력의 기존 각도·각속도 변환 유지
