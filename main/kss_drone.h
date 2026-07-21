@@ -9,7 +9,7 @@
 #include "espnow_interface.h"
 #include "adc_battery.h"
 #include "led.h"
-#include "kss_drone_stats.h"
+
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -121,31 +121,6 @@ Landing -> Disarmed
 #define ENABLE_CMD_DETAIL_LOG 0
 
 
-//time
-#define BACKGROUND_SLOW_JOB_TIME   0.010f
-#define ARMED_SLOW_COMP_TIME       0.004f
-
-struct ArmedContext
-{
-    const ControlPacket* cmd = nullptr;
-
-    AttitudeTarget target{};
-    IMU_PARESED_DATA imu{};
-    EKFAttitudeInput ekf_input{};
-    EKFAttitudeOutput ekf_out{};
-    AttitudeState state{};
-
-    FlightPIDOutput pid_out{};
-    MixerInput mix_in{};
-    MixerOutput mix_out{};
-
-    float throttle_rate_cmd = 0.0f;
-    float thrust_cmd = 0.0f;
-
-    float final_axis_rp_scale = 1.0f;
-    float final_axis_yaw_scale = 1.0f;
-};
-
 class KSSDrone
 {
     public:
@@ -238,8 +213,8 @@ class KSSDrone
         float pitch_trim_rad_ = 0.000f;   //trim--  -> pitch(-)
 
         // designated trim
-        float roll_manual_trim_rad_  = DEG2RAD(0.00f); //0.70    //trim--  -> roll(-)
-        float pitch_manual_trim_rad_ = DEG2RAD(0.00f); //0.30  //trim--  -> pitch(-)
+        float roll_manual_trim_rad_  = DEG2RAD(0.40f); //0.70    //trim--  -> roll(-)
+        float pitch_manual_trim_rad_ = DEG2RAD(-0.40f); //0.30  //trim--  -> pitch(-)
  
         // auto trim
         float auto_roll_trim_dt_ = 0.0f;
@@ -319,24 +294,17 @@ class KSSDrone
 
         //task log
         // loop timing statistics
-        LoopTimingStats loop_stats_{};
-        ImuFrameStats imu_frame_stats_{};
+        float loop_dt_min_ = 999.0f;
+        float loop_dt_max_ = 0.0f;
+        float loop_dt_sum_ = 0.0f;
+
+        uint32_t loop_dt_count_ = 0;
+        uint32_t loop_dt_over_2ms_ = 0;
+        uint32_t loop_dt_over_5ms_ = 0;
+        uint32_t loop_dt_over_10ms_ = 0;
+
+        float loop_dt_log_elapsed_ = 0.0f;
         DisarmReason debug_disarm_reason_ = DisarmReason::NONE;
-
-        float slow_bg_dt_accum_ = 0.0f;
-
-
-        float armed_slow_comp_dt_accum_ = 0.0f;
-
-        float cached_pitch_vel_comp_rad_ = 0.0f;
-        float cached_roll_vel_comp_rad_ = 0.0f;
-
-        float cached_thrust_v_scale_ = 1.0f;
-        float cached_axis_rp_v_scale_ = 1.0f;
-        float cached_axis_yaw_v_scale_ = 1.0f;
-
-        //imu
-        static constexpr int64_t IMU_STALE_LIMIT_US = 2000;
 
     public:
         esp_err_t StartTask();
@@ -356,33 +324,13 @@ class KSSDrone
         esp_err_t Error(const float dt);
         esp_err_t SetBHandle(board_handles_t bhandle);
 
-
         //Jobs
         esp_err_t BackgroundJobs(const float dt);
-        esp_err_t FastBackgroundJobs(const float dt);
-        esp_err_t SlowBackgroundJobs(const float dt);
-
-        esp_err_t ArmedPrepareFast(const float dt, ArmedContext& ctx);
-        esp_err_t ArmedControlFast(const float dt, ArmedContext& ctx);
-        esp_err_t ArmedOutputFast(const float dt, ArmedContext& ctx);
-        void ArmedSlowCompUpdate(const float dt, ArmedContext& ctx);
-        void UpdatePseudoVelocitySlow(const float dt, ArmedContext& ctx);
-
-        void UpdateVoltageCompSlow(ArmedContext& ctx);
-        void UpdateAutoTrimSlow(const float dt, ArmedContext& ctx);
 
         //auto bias
         esp_err_t ImuBiasCalibrating(const float dt);
 
         void ResetGyroBiasAccumulator();
-
-        //imu log
-        void ResetImuFrameStats();
-        void UpdateImuFrameStats(const SharedSnapshotFrame<IMU_PARESED_DATA>& frame, int64_t now_us);
-
-        //log
-        void UpdateMainLoopStats(float raw_dt_s);
-        void TryPrintMainLoopStats();
 
     private:
         void ChangeState(const DroneState to_state);
@@ -413,7 +361,6 @@ class KSSDrone
         void UpdateDynamicClimbTrim(const float dt, const AttitudeTarget& target, const float throttle_rate_cmd);
 
         void UpdateDynamicTakeoffTrim(const AttitudeTarget& target, const float throttle_rate_cmd);
-
 };
 
 inline uint16_t FloatToDshot(float x)

@@ -1,7 +1,7 @@
 
 file(GLOB_RECURSE SOURCES "*.cpp") 
 
-idf_component_register(SRCS "kss_drone_compensation.cpp" "kss_drone_background.cpp" "kss_drone_armed.cpp" "kss_drone_state.cpp" "kss_drone_task.cpp" "led.cpp" "adc_battery.cpp" "espnow_interface.cpp" "kss_drone.cpp" "gpio_config.cpp" "motor_interface.cpp" "motor.cpp" "imu_icm42688p.cpp" "imu_interface.cpp" "main.cpp" ${SOURCES}
+idf_component_register(SRCS "led.cpp" "adc_battery.cpp" "espnow_interface.cpp" "kss_drone.cpp" "gpio_config.cpp" "motor_interface.cpp" "motor.cpp" "imu_icm42688p.cpp" "imu_interface.cpp" "main.cpp" ${SOURCES}
                     INCLUDE_DIRS "." 
                     REQUIRES
                     espressif__eigen

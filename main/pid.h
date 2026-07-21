@@ -175,25 +175,18 @@ class PIDController2
             this->integral_ = 0.0f;
         }
 
-        inline float Update(float target,
-                            float current,
-                            float dt,
-                            bool output_saturated = false,
-                            float p_scale = 1.0f,
-                            float d_scale = 1.0f)
+
+        inline float Update(float target, float current, float dt, bool output_saturated = false)
         {
             if (dt <= 0.0f)
             {
                 return 0.0f;
             }
 
-            p_scale = std::clamp(p_scale, 0.0f, 1.0f);
-            d_scale = std::clamp(d_scale, 0.0f, 1.0f);
-
             const float error = target - current;
 
             // P
-            this->p_term_ = (gains_.kp * p_scale) * error;
+            this->p_term_ = gains_.kp * error;
 
             // D
             float derivative_raw = 0.0f;
@@ -210,20 +203,23 @@ class PIDController2
                 this->d_filter_alpha_ * this->derivative_filtered_ +
                 (1.0f - this->d_filter_alpha_) * derivative_raw;
 
-            this->d_term_ = (gains_.kd * d_scale) * this->derivative_filtered_;
+            this->d_term_ = gains_.kd * this->derivative_filtered_;
 
             // Current I term
             const float i_term_before = gains_.ki * this->integral_;
             const float u_unsat = this->p_term_ + i_term_before + this->d_term_;
 
+            // 기본 적분 속도
             float i_scale = 1.0f;
 
+            // 큰 오차에서는 I를 천천히
             constexpr float I_ZONE = 0.25f;
             if (std::fabs(error) > I_ZONE)
             {
                 i_scale *= 0.20f;
             }
 
+            // 출력 limit 근처에서는 I를 천천히
             constexpr float LIMIT_MARGIN_RATIO = 0.10f;
             const float output_range = limits_.output_max - limits_.output_min;
             const float limit_margin = output_range * LIMIT_MARGIN_RATIO;
@@ -237,6 +233,7 @@ class PIDController2
                 i_scale *= 0.10f;
             }
 
+            // error와 integral 방향이 반대면, I를 빨리 풀어줌
             const bool i_opposes_error =
                 (this->integral_ * error) < 0.0f;
 
@@ -245,8 +242,10 @@ class PIDController2
                 i_scale = 1.5f;
             }
 
+            // 적분
             this->integral_ += error * dt * i_scale;
 
+            // 항상 약하게 leak
             constexpr float I_LEAK_PER_SEC = 0.3f;
             this->integral_ *= std::exp(-I_LEAK_PER_SEC * dt);
 
@@ -256,18 +255,18 @@ class PIDController2
                 this->limits_.integral_max
             );
 
-            this->i_term_ = gains_.ki * this->integral_;
+            this->i_term_= gains_.ki * this->integral_;
 
             this->last_error_ = error;
 
             float output = this->p_term_ + this->i_term_ + this->d_term_;
             output = std::clamp(output, this->limits_.output_min, this->limits_.output_max);
 
+            // this->last_error_ = error;
             this->last_output_ = output;
 
             return output;
         }
-
 
 
         // inline float Update(float target, float current, float dt, bool output_saturated = false)

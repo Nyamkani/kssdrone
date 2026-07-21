@@ -7,7 +7,6 @@
 #include <packets.h>
 
 #include "flight_pid_config.h"
-#include "flight_tune_config.h"
 
 struct AttitudeTarget
 {
@@ -180,25 +179,18 @@ class FlightPIDController
                 );
             }
 
-            const float rp_tpa_scale = CalcTpaScale(target.throttle, TPA_RATE_RP);
-            const float yaw_tpa_scale = CalcTpaScale(target.throttle, TPA_RATE_YAW);
-
             out.roll = roll_rate_pid_.Update(
                 out.roll_rate_target,
                 state.gyro_x_rad_s,
                 dt,
-                output_saturated,
-                rp_tpa_scale,
-                rp_tpa_scale
+                output_saturated
             );
 
             out.pitch = pitch_rate_pid_.Update(
                 out.pitch_rate_target,
                 state.gyro_y_rad_s,
                 dt,
-                output_saturated,
-                rp_tpa_scale,
-                rp_tpa_scale
+                output_saturated
             );
 
             float yaw_rate_target = target.yaw_rate_rad_s;
@@ -260,9 +252,7 @@ class FlightPIDController
                 yaw_rate_target,
                 state.gyro_z_rad_s,
                 dt,
-                output_saturated,
-                yaw_tpa_scale,
-                yaw_tpa_scale
+                output_saturated
             );
 
             return out;
@@ -316,19 +306,6 @@ class FlightPIDController
             return x;
         }
 
-        inline float CalcTpaScale(float throttle, float tpa_rate) const
-        {
-            if (throttle <= TPA_BREAKPOINT)
-            {
-                return 1.0f;
-            }
-
-            const float x = (throttle - TPA_BREAKPOINT) / (1.0f - TPA_BREAKPOINT);
-            const float t = std::clamp(x, 0.0f, 1.0f);
-
-            return std::clamp(1.0f - (tpa_rate * t), 0.0f, 1.0f);
-        }
-        
     private:
         // 1st stage
         PIDController2 roll_angle_pid_;

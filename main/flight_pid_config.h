@@ -11,33 +11,33 @@
 #if FLIGHT_PROFILE == FLIGHT_PROFILE_TUNE
 
     // Rate PID
-    #define ROLL_RATE_P 0.0280f    //0.08~0.12   //0.0450f
-    #define ROLL_RATE_I 0.0020f    //0.04~0.88   //0.0030f
-    #define ROLL_RATE_D 0.0001f   //0.001 ~ 0.003    //0.0007f
+    #define ROLL_RATE_P 0.0360f    //0.08~0.12   //0.0450f
+    #define ROLL_RATE_I 0.0030f    //0.04~0.88   //0.0030f
+    #define ROLL_RATE_D 0.0002f   //0.001 ~ 0.003    //0.0007f
 
-    #define PITCH_RATE_P 0.0280f   //0.08~0.12  //0.0450f
-    #define PITCH_RATE_I 0.0020f   //0.04~0.88  //0.0030f
-    #define PITCH_RATE_D 0.0001f  //0.001 ~ 0.003   0.0007f
+    #define PITCH_RATE_P 0.0360f   //0.08~0.12  //0.0450f
+    #define PITCH_RATE_I 0.0030f   //0.04~0.88  //0.0030f
+    #define PITCH_RATE_D 0.0002f  //0.001 ~ 0.003   0.0007f
 
-    #define YAW_RATE_P 0.0500f    //0.05~0.1   //0.130
-    #define YAW_RATE_I 0.0015f    //0.01~0.05  //0.020
+    #define YAW_RATE_P 0.0600f    //0.05~0.1   //0.130
+    #define YAW_RATE_I 0.0013f    //0.01~0.05  //0.020
     #define YAW_RATE_D 0.0000f    //0.000~0.002  //0.000
 
     // Angle PID
-    #define ROLL_ANGLE_P 2.6f     //4.0~6.0
+    #define ROLL_ANGLE_P 3.7f     //4.0~6.0
     #define ROLL_ANGLE_I 0.0f     //0.0~0.1
     #define ROLL_ANGLE_D 0.0f     //0.0~0.
 
-    #define PITCH_ANGLE_P 2.6f    //4.0~6.0
+    #define PITCH_ANGLE_P 3.7f    //4.0~6.0
     #define PITCH_ANGLE_I 0.0f    //0.0~0.1
     #define PITCH_ANGLE_D 0.0f    //0.0~0
 
-    #define YAW_ANGLE_P 0.060f      //0.0~0.1   //0.80
+    #define YAW_ANGLE_P 0.120f      //0.0~0.1   //0.80
     #define YAW_ANGLE_I 0.000f      //0.0~0.05
     #define YAW_ANGLE_D 0.000f      //0.0~0.
 
     // PID limits
-    #define ANGLE_PID_MAX_RATE_RAD_S    2.0f //1.5
+    #define ANGLE_PID_MAX_RATE_RAD_S    2.5f //1.5
     #define RATE_PID_MAX_RATE_RAD       1.1f
     #define YAW_RATE_PID_MAX_RATE_RAD   0.35f  //0.25f
 
