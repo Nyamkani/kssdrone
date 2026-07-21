@@ -125,11 +125,6 @@ struct __attribute__((packed)) TelemetryPacket
     uint8_t state = 0;
     uint8_t mode = 0;
 
-    float  battery_voltage = 0;
-    float  battery_percent = 0;
-    uint32_t battery_consumed_mah = 0;
-    uint8_t battery_remaining_percent = 0;
-
     DisarmReason debug_disarm_reason = DisarmReason::NONE;
 
     uint8_t reserved[2] = {0, 0};

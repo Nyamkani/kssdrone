@@ -78,12 +78,7 @@ esp_err_t KSSDrone::Disarmed(const float dt)
 
     const ControlPacket& cmd = this->active_cmd_;
 
-    // if (!this->active_cmd_valid_ || this->esp_now_interface_.IsTimeout())
-    // {
-    //     return ESP_OK;
-    // }
-
-    if (!this->active_cmd_valid_ || this->crsf_receiver_.IsTimeout())
+    if (!this->active_cmd_valid_ || this->esp_now_interface_.IsTimeout())
     {
         return ESP_OK;
     }
@@ -104,8 +99,7 @@ esp_err_t KSSDrone::Arming(const float dt)
 {
     ControlPacket cmd{};
 
-    // if (!this->esp_now_interface_.IsTimeout())
-    if(!this->crsf_receiver_.IsTimeout())
+    if (!this->esp_now_interface_.IsTimeout())
     {
         cmd = this->active_cmd_;
     }
@@ -268,9 +262,8 @@ esp_err_t KSSDrone::Landing(const float dt)
 {
     // 0. Emergency / disarm check
     ControlPacket cmd{};
-    // const bool cmd_valid = !this->esp_now_interface_.IsTimeout();
-    const bool cmd_valid = !this->crsf_receiver_.IsTimeout();
-    
+    const bool cmd_valid = !this->esp_now_interface_.IsTimeout();
+
     if (cmd_valid)
     {
         cmd = this->active_cmd_;

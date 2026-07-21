@@ -8,8 +8,6 @@
 /* Project */
 #include "gpio_config.h"
 
-#define BATTERY_MAX_VOLTAGE 8.4f
-
 enum class BatteryState
 {
     NORMAL = 0,
@@ -28,7 +26,6 @@ public:
     esp_err_t Update(float dt);
 
     float GetVoltage() const { return voltage_filtered_; }
-    float GetPercent() const { return (voltage_filtered_ / BATTERY_MAX_VOLTAGE) * 100.0f; }
     float GetRawVoltage() const { return voltage_raw_; }
     BatteryState GetState() const { return state_; }
 

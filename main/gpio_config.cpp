@@ -13,17 +13,6 @@ static const char *tag = "gpio_init";
 static adc_oneshot_unit_handle_t s_adc_handle = nullptr;
 static bool s_gpio_isr_service_installed = false;
 
-constexpr gpio_num_t ELRS_UART_TX_PIN = GPIO_NUM_40;
-constexpr gpio_num_t ELRS_UART_RX_PIN = GPIO_NUM_39;
-
-constexpr int ELRS_UART_BAUD_RATE = 420000;
-constexpr int ELRS_UART_RX_BUFFER_SIZE = 2048;
-constexpr int ELRS_UART_EVENT_QUEUE_SIZE = 20;
-static constexpr int ELRS_UART_TX_BUFFER_SIZE = 256;
-
-
-QueueHandle_t g_elrs_uart_event_queue = nullptr;
-
 esp_err_t BoardInitGPIOOutputs(void)
 {
     gpio_config_t io_conf = {};
@@ -164,61 +153,12 @@ esp_err_t BoardInstallIMUISR(gpio_isr_t isr_handler, void *arg)
     return ESP_OK;
 }
 
-esp_err_t BoardUartInit()
-{
-    {
-        uart_config_t cfg{};
-        cfg.baud_rate = 420000;
-        cfg.data_bits = UART_DATA_8_BITS;
-        cfg.parity    = UART_PARITY_DISABLE;
-        cfg.stop_bits = UART_STOP_BITS_1;
-        cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
-        cfg.source_clk = UART_SCLK_DEFAULT;
-
-        ESP_ERROR_CHECK(uart_driver_install(    
-            ELRS_UART_NUM,
-            ELRS_UART_RX_BUFFER_SIZE,
-            ELRS_UART_TX_BUFFER_SIZE,
-            ELRS_UART_EVENT_QUEUE_SIZE,
-            &g_elrs_uart_event_queue,
-            0));
-        ESP_ERROR_CHECK(uart_param_config(ELRS_UART_NUM, &cfg));
-        ESP_ERROR_CHECK(uart_set_pin(ELRS_UART_NUM,
-                                     ELRS_UART_TX,
-                                     ELRS_UART_RX,
-                                     UART_PIN_NO_CHANGE,
-                                     UART_PIN_NO_CHANGE));
-    }
-
-    {
-        uart_config_t cfg{};
-        cfg.baud_rate = 115200;   // MTF-02P
-        cfg.data_bits = UART_DATA_8_BITS;
-        cfg.parity    = UART_PARITY_DISABLE;
-        cfg.stop_bits = UART_STOP_BITS_1;
-        cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
-        cfg.source_clk = UART_SCLK_DEFAULT;
-
-        ESP_ERROR_CHECK(uart_driver_install(MTF_UART_NUM, 2048, 0, 0, nullptr, 0));
-        ESP_ERROR_CHECK(uart_param_config(MTF_UART_NUM, &cfg));
-        ESP_ERROR_CHECK(uart_set_pin(MTF_UART_NUM,
-                                     MTF_UART_TX,
-                                     MTF_UART_RX,
-                                     UART_PIN_NO_CHANGE,
-                                     UART_PIN_NO_CHANGE));
-    }
-
-    return ESP_OK;
-}
-
-
 esp_err_t BoardInitAll(board_handles_t *handles)
 {
     ESP_RETURN_ON_ERROR(BoardInitGPIOOutputs(), tag, "gpio outputs init failed");
     ESP_RETURN_ON_ERROR(BoardInitBatteryADC(), tag, "battery adc init failed");
     ESP_RETURN_ON_ERROR(BoardInitSPI(handles), tag, "spi init failed");
     ESP_RETURN_ON_ERROR(BoardInitIMUIntGPIO(), tag, "imu int gpio init failed");
-    ESP_RETURN_ON_ERROR(BoardUartInit(), tag, "uart init failed");
 
     ESP_LOGI(tag, "Board initialization complete");
     return ESP_OK;
@@ -228,9 +168,4 @@ esp_err_t BoardInitAll(board_handles_t *handles)
 void BoardSetBuzzerLed(bool on)
 {
     gpio_set_level(PIN_BUZZER_LED, on ? 0 : 1);
-}
-
-QueueHandle_t GetElrsUartEventQueue()
-{
-    return g_elrs_uart_event_queue;
 }

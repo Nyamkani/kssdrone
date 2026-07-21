@@ -44,17 +44,7 @@ esp_err_t KSSDrone::Initialize(board_handles_t bhandle)
         return ret;
     }
 
-    // ret = this->esp_now_interface_.Initialize();
-    // if (ret != ESP_OK)
-    // {
-    //     return ret;
-    // }
-
-    ret = this->crsf_receiver_.Initialize(
-        ELRS_UART_NUM,
-        GetElrsUartEventQueue()
-    );
-
+    ret = this->esp_now_interface_.Initialize();
     if (ret != ESP_OK)
     {
         return ret;

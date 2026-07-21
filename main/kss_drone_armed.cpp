@@ -103,17 +103,17 @@ esp_err_t KSSDrone::ArmedFailsafeFast(const float dt)
 
      const int64_t now_us = esp_timer_get_time();
 
-     //#define COMMAND_TIMEOUT_US    300000
+     //#define COMMAND_TIMEOUT_US    300
     if ((now_us - this->armed_last_cmd_us_) > COMMAND_TIMEOUT_US)
     {
-        // ESP_LOGE(TAG,
-        //     "Command timeout -> LANDING dt_ms=%lld rx=%lu seq=%lu max_gap_ms=%lld jump=%lu",
-        //     (esp_timer_get_time() - this->esp_now_interface_.GetLastRxTimeUs()) / 1000,
-        //     this->esp_now_interface_.GetRxCount(),
-        //     this->esp_now_interface_.GetLastSeq(),
-        //     this->esp_now_interface_.GetMaxRxGapUs() / 1000,
-        //     this->esp_now_interface_.GetSeqJumpCount()
-        // );
+        ESP_LOGE(TAG,
+            "Command timeout -> LANDING dt_ms=%lld rx=%lu seq=%lu max_gap_ms=%lld jump=%lu",
+            (esp_timer_get_time() - this->esp_now_interface_.GetLastRxTimeUs()) / 1000,
+            this->esp_now_interface_.GetRxCount(),
+            this->esp_now_interface_.GetLastSeq(),
+            this->esp_now_interface_.GetMaxRxGapUs() / 1000,
+            this->esp_now_interface_.GetSeqJumpCount()
+        );
 
         this->debug_disarm_reason_ = DisarmReason::COMM_TIMEOUT;
         this->landing_mode_ = LandingMode::FAILSAFE;
@@ -182,8 +182,7 @@ esp_err_t KSSDrone::ArmedCommandMedium(const float dt, ArmedContext& ctx)
         return ESP_OK;
     }
 
-    // if (!this->active_cmd_valid_ || this->esp_now_interface_.IsTimeout())
-     if (!this->active_cmd_valid_ || this->crsf_receiver_.IsTimeout())
+    if (!this->active_cmd_valid_ || this->esp_now_interface_.IsTimeout())
     {
         this->armed_cmd_valid_ = false;
         this->armed_target_valid_ = false;
@@ -206,10 +205,8 @@ esp_err_t KSSDrone::ArmedCommandMedium(const float dt, ArmedContext& ctx)
 
     const ControlPacket& cmd = *ctx.cmd;
 
-    // this->armed_last_cmd_us_ =
-    //     this->esp_now_interface_.GetLastRxTimeUs();
     this->armed_last_cmd_us_ =
-        this->crsf_receiver_.GetLastRcTimeUs();
+        this->esp_now_interface_.GetLastRxTimeUs();
 
     if (!this->armed_)
     {
@@ -690,6 +687,7 @@ esp_err_t KSSDrone::ArmedControlFast(const float dt, ArmedContext& ctx)
     return ESP_OK;
 }
 
+
 esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
 {
     if (this->state_ != DroneState::ARMED)
@@ -763,40 +761,6 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
         1.0f
     );
 
-    /*
-    * 5. Throttle PID Attenuation
-    *
-    * 높은 throttle에서 증가하는 모터 제어 권한으로 인한
-    * Roll/Pitch/Yaw 진동을 줄이기 위해 PID axis 출력을 감쇠한다.
-    *
-    * Feed-forward 및 mixer bias에는 적용하지 않는다.
-    */
-    if (ctx.target.throttle > TPA_BREAKPOINT)
-    {
-        float tpa_ratio =
-            (ctx.target.throttle - TPA_BREAKPOINT) /
-            (1.0f - TPA_BREAKPOINT);
-
-        tpa_ratio = std::clamp(
-            tpa_ratio,
-            0.0f,
-            1.0f);
-
-        const float rp_tpa = std::clamp(
-            1.0f - TPA_RATE_RP * tpa_ratio,
-            0.5f,
-            1.0f);
-
-        const float yaw_tpa = std::clamp(
-            1.0f - TPA_RATE_YAW * tpa_ratio,
-            0.5f,
-            1.0f);
-
-        ctx.pid_out.roll  *= rp_tpa;
-        ctx.pid_out.pitch *= rp_tpa;
-        ctx.pid_out.yaw   *= yaw_tpa;
-    }
-
     yaw_protect_blend = SmoothStep01(yaw_protect_blend);
 
     float yaw_priority_scale =
@@ -838,7 +802,44 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     ctx.pid_out.yaw = std::clamp(ctx.pid_out.yaw, -0.5f, 0.5f);
 
     /*
-     * 6. Thrust curve
+    * 5. Throttle PID Attenuation
+    *
+    * 높은 throttle에서 증가하는 모터 제어 권한으로 인한
+    * Roll/Pitch/Yaw 진동을 줄이기 위해 PID axis 출력을 감쇠한다.
+    *
+    * Feed-forward 및 mixer bias에는 적용하지 않는다.
+    */
+    if (ctx.target.throttle > TPA_BREAKPOINT)
+    {
+        float tpa_ratio =
+            (ctx.target.throttle - TPA_BREAKPOINT) /
+            (1.0f - TPA_BREAKPOINT);
+
+        tpa_ratio = std::clamp(
+            tpa_ratio,
+            0.0f,
+            1.0f);
+
+        const float rp_tpa = std::clamp(
+            1.0f - TPA_RATE_RP * tpa_ratio,
+            0.5f,
+            1.0f);
+
+        const float yaw_tpa = std::clamp(
+            1.0f - TPA_RATE_YAW * tpa_ratio,
+            0.5f,
+            1.0f);
+
+        ctx.pid_out.roll  *= rp_tpa;
+        ctx.pid_out.pitch *= rp_tpa;
+        ctx.pid_out.yaw   *= yaw_tpa;
+    }
+
+
+
+
+    /*
+     * 5. Thrust curve
      */
     const float t = std::clamp(ctx.pid_out.throttle, 0.0f, 1.0f);
     const float expo = std::clamp(THRUST_EXPO, 0.0f, 1.0f);
@@ -852,7 +853,7 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     }
 
     /*
-     * 7. Cached output compensation
+     * 6. Cached output compensation
      */
     const ArmedOutputCache& oc = this->armed_output_cache_;
 
@@ -866,7 +867,7 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     thrust_cmd = std::clamp(thrust_cmd, 0.0f, 1.0f);
 
     /*
-     * 8. Mixer input
+     * 7. Mixer input
      */
     MixerInput mix_in{};
     mix_in.throttle = thrust_cmd;
@@ -875,7 +876,7 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     mix_in.yaw      = ctx.pid_out.yaw   * oc.axis_yaw_v_scale;
 
     /*
-     * 9. VZ based attitude compensation
+     * 8. VZ based attitude compensation
      */
     float vz_comp = 0.0f;
 
@@ -889,7 +890,7 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     mix_in.yaw   += K_YAW_VZ_COMP   * vz_comp;
 
     /*
-     * 10. Yaw throttle-down feed-forward
+     * 9. Yaw throttle-down feed-forward
      */
     if (this->is_airborne_ && ctx.throttle_rate_cmd < 0.0f)
     {
@@ -911,7 +912,7 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     }
 
     /*
-     * 11. Mixer with cached motor multipliers
+     * 10. Mixer with cached motor multipliers
      */
     MixerOutput mix_out =
         MixMotorsWithMultiplier(
@@ -923,7 +924,7 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
         );
 
     /*
-     * 12. Cached ground blend
+     * 11. Cached ground blend
      */
     const float ground_blend = oc.ground_blend;
 
@@ -933,7 +934,7 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     mix_out.m4 = thrust_cmd + (mix_out.m4 - thrust_cmd) * ground_blend;
 
     /*
-     * 13. 평균 thrust_cmd로 복귀
+     * 12. 평균 thrust_cmd로 복귀
      */
     const float avg =
         0.25f * (mix_out.m1 + mix_out.m2 + mix_out.m3 + mix_out.m4);
@@ -946,7 +947,7 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     mix_out.m4 += delta;
 
     /*
-     * 14. Yaw output bias
+     * 13. Yaw output bias
      */
     if (this->is_airborne_)
     {
@@ -957,12 +958,12 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     }
 
     /*
-     * 15. Normalize
+     * 14. Normalize
      */
     MixNormalize(mix_out, 0.0f, 1.0f);
 
     /*
-     * 16. DSHOT conversion and motor output
+     * 15. DSHOT conversion and motor output
      */
     uint16_t d1 = ThrottleToDshotWithIdle(mix_out.m1);
     uint16_t d2 = ThrottleToDshotWithIdle(mix_out.m2);
@@ -992,7 +993,7 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
 
 
         /*
-        * 17. Telemetry
+        * 16. Telemetry
         */
         this->tpkt_.roll_rad = ctx.state.roll_rad;
         this->tpkt_.pitch_rad = ctx.state.pitch_rad;
@@ -1006,7 +1007,7 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
 
 
         /*
-        * 18. Log update, 250Hz
+        * 17. Log update, 250Hz
         */
         this->log_.dt = dt;
         this->log_.roll_rad = ctx.state.roll_rad;
@@ -1042,7 +1043,6 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
 
     return ESP_OK;
 }
-
 void KSSDrone::ArmedOutputCompMedium(const float dt, ArmedContext& ctx)
 {
     if (this->state_ != DroneState::ARMED)
@@ -1189,12 +1189,6 @@ void KSSDrone::ArmedTiltSafetyMedium(const float dt, ArmedContext& ctx)
 
     if (!ctx.state_valid)
     {
-        return;
-    }
-
-    if (this->drone_mode_ != DroneMode::ANGLE_SELF_LEVEL)
-    {
-        this->tilt_trigger_dt_ = 0.0f;
         return;
     }
 

@@ -4,7 +4,6 @@
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 
-#include "driver/uart.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_adc/adc_oneshot.h"
@@ -77,11 +76,6 @@ esp_err_t BoardInitAll(board_handles_t *handles);
  * @param on true to turn on, false to turn off
  */
 void BoardSetBuzzerLed(bool on);
-
-//uart
-esp_err_t BoardUartInit();
-
-QueueHandle_t GetElrsUartEventQueue();
 
 #ifdef __cplusplus
 }

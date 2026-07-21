@@ -6,10 +6,7 @@
 #include "motor_mixer.h"
 #include "delta_timer.h"
 #include "ekf.h"
-
-// #include "espnow_interface.h"
-#include "kss_crsf_receiver.h"
-
+#include "espnow_interface.h"
 #include "adc_battery.h"
 #include "led.h"
 #include "kss_drone_stats.h"
@@ -82,7 +79,7 @@ Landing -> Disarmed
 #define IDLE_DSHOT_THRESHOLD 88
 
 //Tilt trigger
-#define TILT_LIMIT_RAD (60.0f * 3.1415926f / 180.0f)  //1.221rad 55deg
+#define TILT_LIMIT_RAD (55.0f * 3.1415926f / 180.0f)  //1.221rad 55deg
 #define TILT_TRIGGER_DT   0.3 //s
 
 //normalize accel
@@ -93,7 +90,7 @@ Landing -> Disarmed
 #define FREQ_TO_MS(x)    ((float)(1000.0f/(x)))            // Convert frequency to period in miliseconds
 
 //BackgroundJob 
-#define CHECK_BATTERY_PERIOD_S  0.05f                // Check battery every 50ms (20Hz)
+#define CHECK_BAT_MS  0.05f                // Check battery every 50ms (20Hz)
 #define CHECK_SEND_TELEMETRY_MS 0.1f      // Send telemetry every 100ms (10Hz)
 #define CHECK_SEND_LOG_MS       0.1f            // Send log everyt 100ms (10hz)
 
@@ -103,7 +100,7 @@ Landing -> Disarmed
 #define EKF_READY_ACC_MIN       0.9f
 #define EKF_READY_ACC_MAX       1.1f
 
-//landing
+//landing 
 #define SOFT_LANDING_RATE      0.05f
 #define FAILSAFE_LANDING_RATE  0.05f
 #define MAX_LANDING_TIME       30.0f  //30s
@@ -120,7 +117,7 @@ Landing -> Disarmed
 #define BACKGROUND_SLOW_JOB_TIME   0.010f
 #define ARMED_SLOW_COMP_TIME       0.004f
 
-#define COMMAND_TIMEOUT_US    200000LL
+#define COMMAND_TIMEOUT_US    300000LL
 
 //log
 struct ArmedProfileStats
@@ -215,9 +212,7 @@ class KSSDrone
 
     private:
         IMUInterface imu_interface_;
-        // EspNowInterface esp_now_interface_;
-        KssCrsfReceiver crsf_receiver_;
-
+        EspNowInterface esp_now_interface_;
 
         FlightPIDController pid_controller_;
         MotorInterface motor_interface_;

@@ -30,41 +30,26 @@ esp_err_t KSSDrone::FastBackgroundJobs(const float dt)
 esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
 {
     this->battery_check_dt_ += dt;
-
-    if (this->battery_check_dt_ >= CHECK_BATTERY_PERIOD_S)
+    if (this->battery_check_dt_ >= CHECK_BAT_MS)
     {
-        while (this->battery_check_dt_ >=
-            CHECK_BATTERY_PERIOD_S)
+        while (this->battery_check_dt_ >= CHECK_BAT_MS)
         {
-            this->battery_check_dt_ -=
-                CHECK_BATTERY_PERIOD_S;
+            this->battery_check_dt_ -= CHECK_BAT_MS;
         }
 
-        const esp_err_t ret =
-            this->battery_monitor_.Update(
-                CHECK_BATTERY_PERIOD_S);
-
+        esp_err_t ret = this->battery_monitor_.Update(dt);
         if (ret != ESP_OK)
         {
             return ret;
         }
-
-        this->tpkt_.battery_voltage =
-            this->battery_monitor_.GetVoltage();
-
-        this->tpkt_.battery_percent =
-            this->battery_monitor_.GetPercent();
     }
-    // const int64_t rx_dt_us =
-    //     esp_timer_get_time() - this->esp_now_interface_.GetLastRxTimeUs();
 
-    // const int64_t rx_dt_us =
-    //     esp_timer_get_time() - this->crsf_receiver_.GetLastRxTimeUs();
+    const int64_t rx_dt_us =
+        esp_timer_get_time() - this->esp_now_interface_.GetLastRxTimeUs();
 
     this->telemetry_send_dt_ += dt;
 
-    // if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS && rx_dt_us > 2000)
-    if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS)
+    if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS && rx_dt_us > 2000)
     {
         while (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS)
         {
@@ -74,16 +59,12 @@ esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
         this->tpkt_.mode = static_cast<uint8_t>(this->drone_mode_);
         this->tpkt_.state = static_cast<uint8_t>(this->state_);
 
-        const TelemetryPacket send_pkt_ = this->tpkt_;
+        TelemetryPacket send_pkt_ = this->tpkt_;
 
-        // esp_err_t ret = this->esp_now_interface_.SendTelemetry(send_pkt_);
-        esp_err_t ret = this->crsf_receiver_.SendTelemetry(send_pkt_);
-
+        esp_err_t ret = this->esp_now_interface_.SendTelemetry(send_pkt_);
         if (ret != ESP_OK)
         {
-            ESP_LOGW(TAG,
-                    "CRSF telemetry send failed: %s",
-                    esp_err_to_name(ret));
+            return ret;
         }
     }
 
@@ -107,32 +88,80 @@ esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
 void KSSDrone::UpdateCommandCache()
 {
     ControlPacket cmd{};
+    const bool valid = this->esp_now_interface_.GetLatestCommand(cmd);
 
-    if (!this->crsf_receiver_.GetLatestCommand(cmd))
+    if (!valid)
     {
         this->active_cmd_valid_ = false;
         return;
     }
 
-    const bool new_command =
-        !this->control_seq_ready_ ||
-        SeqDiff16(
-            cmd.seq,
-            this->last_control_seq_) > 0;
+    bool accept_cmd = false;
 
-    if (!new_command)
+    if (!this->control_seq_ready_)
     {
-        /*
-         * 같은 CRSF snapshot을 1kHz에서 다시 읽은 정상 상황.
-         */
-        return;
+        // First valid packet
+        accept_cmd = true;
+    }
+    else
+    {
+        const int16_t diff = SeqDiff16(cmd.seq, this->last_control_seq_);
+
+        if (diff > 0)
+        {
+            // 정상 증가, uint16_t wrap-around 포함
+            accept_cmd = true;
+        }
+        else if (diff == 0)
+        {
+            // 같은 패킷/중복 패킷.
+            // active_cmd_는 그대로 유지한다.
+            accept_cmd = false;
+        }
+        else
+        {
+            // diff < 0: 오래된 패킷 또는 TX 재부팅/seq reset
+            const int32_t seq_drop =
+                static_cast<int32_t>(this->last_control_seq_) -
+                static_cast<int32_t>(cmd.seq);
+
+            if (this->state_ == DroneState::DISARMED && seq_drop > 100)
+            {
+                ESP_LOGW(TAG,
+                         "TX seq reset accepted in DISARMED: last=%u now=%u drop=%d",
+                         this->last_control_seq_,
+                         cmd.seq,
+                         static_cast<int>(seq_drop));
+
+                accept_cmd = true;
+
+                // 새 TX 세션으로 보는 것이므로 command event seq도 초기화
+                this->command_seq_ready_ = false;
+                this->last_command_seq_ = 0;
+            }
+            else
+            {
+                ESP_LOGW(TAG,
+                         "Old control packet ignored: last=%u now=%u diff=%d",
+                         this->last_control_seq_,
+                         cmd.seq,
+                         static_cast<int>(diff));
+
+                accept_cmd = false;
+            }
+        }
     }
 
-    this->last_control_seq_ = cmd.seq;
-    this->control_seq_ready_ = true;
+    if (accept_cmd)
+    {
+        this->last_control_seq_ = cmd.seq;
+        this->control_seq_ready_ = true;
 
-    this->active_cmd_ = cmd;
-    this->active_cmd_valid_ = true;
+        this->active_cmd_ = cmd;
+        this->active_cmd_valid_ = true;
+    }
+
+    return;
 }
 
 void KSSDrone::HandleCommandEvents()
@@ -146,28 +175,15 @@ void KSSDrone::HandleCommandEvents()
 
     if (cmd.cmd_flags & CMD_EMERGENCY_STOP)
     {
-        /*
-        * 안전 출력은 중복 여부와 관계없이 항상 적용
-        */
+        ESP_LOGE(TAG, "EMERGENCY STOP!");
+
         this->armed_ = false;
         this->landing_throttle_ = 0.0f;
         this->throttle_prev_ = 0.0f;
-
         this->pid_controller_.ResetIntegrator();
         this->motor_interface_.SetMotorOutput(0, 0, 0, 0);
 
-        const bool new_emergency =
-            !this->command_seq_ready_ ||
-            cmd.cmd_seq != this->last_command_seq_;
-
-        if (new_emergency)
-        {
-            this->command_seq_ready_ = true;
-            this->last_command_seq_ = cmd.cmd_seq;
-
-            ESP_LOGE(TAG, "EMERGENCY STOP!");
-            this->ChangeState(DroneState::DISARMED);
-        }
+        this->ChangeState(DroneState::DISARMED);
 
         return;
     }
@@ -302,27 +318,8 @@ void KSSDrone::HandleCommandEvents()
 
     if (cmd.cmd_flags & CMD_DISARM_REQUEST)
     {
-        const bool flight_active =
-            this->state_ == DroneState::ARMED ||
-            this->state_ == DroneState::LANDING;
-
-        const bool likely_airborne =
-            flight_active &&
-            (this->is_airborne_ ||
-            this->throttle_prev_ >
-                (IDLE_THROTTLE + 0.05f) ||
-            this->landing_throttle_ >
-                (IDLE_THROTTLE + 0.05f));
-
-        if (likely_airborne)
-        {
-            ESP_LOGW(
-                TAG,
-                "DISARM_REQUEST rejected in airborne");
-            return;
-        }
-
         this->armed_ = false;
+        
         return;
     }
 

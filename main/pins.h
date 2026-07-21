@@ -29,11 +29,5 @@ M4  CW   -> real -> m3
 #define PIN_BAT_ADC     GPIO_NUM_1    //d0
 
 
-#define ELRS_UART_NUM   UART_NUM_1
-#define ELRS_UART_TX    GPIO_NUM_40
-#define ELRS_UART_RX    GPIO_NUM_39
 
-#define MTF_UART_NUM    UART_NUM_2
-#define MTF_UART_TX     GPIO_NUM_42
-#define MTF_UART_RX     GPIO_NUM_41
 
