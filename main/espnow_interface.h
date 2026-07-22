@@ -109,7 +109,7 @@ private:
      * espnow task에서 Write
      * main task에서 Read
      */
-    SharedSnapshot<ControlPacket> cmd_snapshot_;
+    TripleSnapshot<ControlPacket> cmd_snapshot_;
 
     /*
      * RX stats
