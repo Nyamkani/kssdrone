@@ -23,24 +23,29 @@ esp_err_t KSSDrone::Initialize(board_handles_t bhandle)
     esp_err_t ret = this->motor_interface_.Initialize();
     if (ret != ESP_OK)
     {
+        ESP_LOGI(TAG, "motor_interface_.Initialize() failed with error: %d", ret);
+
         return ret;
     }
 
     ret = this->pid_controller_.Initialize();
     if (ret != ESP_OK)
     {
+        ESP_LOGI(TAG, "pid_controller_.Initialize() failed with error: %d", ret);
         return ret;
     }
 
     ret = this->dt_.Initialize();
     if (ret != ESP_OK)
     {
+        ESP_LOGI(TAG, "dt_.Initialize() failed with error: %d", ret);
         return ret;
     }
 
     ret = this->imu_interface_.Initialize(&this->bhandle_);
     if (ret != ESP_OK)
     {
+        ESP_LOGI(TAG, "imu_interface_.Initialize() failed with error: %d", ret);    
         return ret;
     }
 
@@ -57,18 +62,21 @@ esp_err_t KSSDrone::Initialize(board_handles_t bhandle)
 
     if (ret != ESP_OK)
     {
+        ESP_LOGI(TAG, "crsf_receiver_.Initialize() failed with error: %d", ret);
         return ret;
     }
 
     ret = this->battery_monitor_.Initialize();
     if (ret != ESP_OK)
     {
+        ESP_LOGI(TAG, "battery_monitor_.Initialize() failed with error: %d", ret);  
         return ret;
     }
 
     ret = this->led_controller_.Initialize();
     if (ret != ESP_OK)
     {
+        ESP_LOGI(TAG, "led_controller_.Initialize() failed with error: %d", ret);
         return ret;
     }
 
@@ -77,6 +85,7 @@ esp_err_t KSSDrone::Initialize(board_handles_t bhandle)
     ret = this->StartTask();
     if (ret != ESP_OK)
     {
+        ESP_LOGI(TAG, "StartTask() failed with error: %d", ret);
         return ret;
     }
 

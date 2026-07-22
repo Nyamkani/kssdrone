@@ -2,6 +2,8 @@
 #include "pins.h"
 #include "driver/gpio.h"
 
+static const char* TAG = "imu_interface";
+
 static void IRAM_ATTR imu_int_isr(void *arg)
 {
     BaseType_t high_task_wakeup = pdFALSE;
@@ -48,6 +50,7 @@ void IMUInterface::IMUUnregisterInterrupt()
 {
     gpio_isr_handler_remove(PIN_IMU_INT);
 }
+
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -225,27 +228,52 @@ esp_err_t IMUInterface::Init()
     esp_err_t ret = ESP_OK;
 
     ret = this->imu_.SoftReset();
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) 
+    {
+        ESP_LOGE(TAG, "IMU SoftReset failed with error: %d", ret);
+        
+        return ret;
+    }
 
-    vTaskDelay(pdMS_TO_TICKS(2));
+    vTaskDelay(pdMS_TO_TICKS(10));
 
     ret = this->imu_.CheckWhoAmI();
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) 
+    {
+        ESP_LOGE(TAG, "IMU CheckWhoAmI failed with error: %d", ret);
+        return ret;
+    }
 
     ret = this->imu_.ConfigurePower();
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) 
+    {
+        ESP_LOGE(TAG, "IMU ConfigurePower failed with error: %d", ret);
+        return ret;
+    }
 
     esp_rom_delay_us(300);
 
     ret = this->ConfigureBaseSensor();
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) 
+    {
+        ESP_LOGE(TAG, "IMU ConfigureBaseSensor failed with error: %d", ret);
+        return ret;
+    }
 
 #if IMU_READ_MODE == IMU_READ_MODE_FIFO_INTERRUPT
     ret = this->ConfigureFifoInterruptMode();
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) 
+    {
+        ESP_LOGE(TAG, "IMU ConfigureFifoInterruptMode failed with error: %d", ret);
+        return ret;
+    }
 #elif IMU_READ_MODE == IMU_READ_MODE_INTERRUPT_LATEST
     ret = this->ConfigureInterruptLatestMode();
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) 
+    {
+        ESP_LOGE(TAG, "IMU ConfigureInterruptLatestMode failed with error: %d", ret);
+        return ret;
+    }   
 #else
     // DIRECT mode: no interrupt
 #endif
@@ -256,6 +284,7 @@ esp_err_t IMUInterface::Init()
     ret = this->SeedInitialSnapshot();
     if (ret != ESP_OK)
     {
+        ESP_LOGE(TAG, "IMU SeedInitialSnapshot failed with error: %d", ret);
         return ret;
     }
 #endif

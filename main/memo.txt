@@ -1,3 +1,8 @@
+SDK설정
+1. frequency = 240mhz
+2. Channel for console output ->jtag/usb only
+3. freertos tick ->1000hz
+
 
 #260401
 1. remove 1k ohm(R7) 

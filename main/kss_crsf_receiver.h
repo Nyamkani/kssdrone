@@ -180,9 +180,9 @@ class KssCrsfReceiver
         uart_port_t uart_num_{UART_NUM_1};
         QueueHandle_t uart_event_queue_{nullptr};
         TaskHandle_t task_handle_{nullptr};
-        SharedSnapshot<ControlPacket> cmd_snapshot_;
+        TripleSnapshot<ControlPacket> cmd_snapshot_;
 
-        SharedSnapshot<CrsfLinkStatistics>link_stats_snapshot_;
+        TripleSnapshot<CrsfLinkStatistics>link_stats_snapshot_;
 
         std::atomic_bool stop_requested_{false};
         bool initialized_{false};

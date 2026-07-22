@@ -185,7 +185,7 @@ class IMUInterface
         IMU_DATA_DIR imu_data_dir_{};
         IMU_DATA_BIAS imu_data_bias_{};
 
-        SharedSnapshot<IMU_PARESED_DATA> imu_snapshot_;
+        TripleSnapshot<IMU_PARESED_DATA> imu_snapshot_;
 
         uint32_t sample_count_ = 0;
 
