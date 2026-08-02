@@ -4,6 +4,8 @@
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 
+#include "soc/usb_serial_jtag_reg.h"
+
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"

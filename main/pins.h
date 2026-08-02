@@ -20,7 +20,7 @@ M4  CW   -> real -> m3
 
 // IMU SPI
 #define PIN_IMU_CS      GPIO_NUM_7  //d8
-#define PIN_IMU_SCLK    GPIO_NUM_8  //d9
+#define PIN_IMU_SCLK    GPIO_NUM_8  //d91
 #define PIN_IMU_MISO    GPIO_NUM_9  //d10
 #define PIN_IMU_MOSI    GPIO_NUM_44 //d7
 #define PIN_IMU_INT     GPIO_NUM_43 //d6
@@ -30,10 +30,10 @@ M4  CW   -> real -> m3
 
 
 #define ELRS_UART_NUM   UART_NUM_1
-#define ELRS_UART_TX    GPIO_NUM_40
-#define ELRS_UART_RX    GPIO_NUM_39
+#define ELRS_UART_TX    GPIO_NUM_40  //40 MTDO
+#define ELRS_UART_RX    GPIO_NUM_41  //41 MTDI
 
 #define MTF_UART_NUM    UART_NUM_2
-#define MTF_UART_TX     GPIO_NUM_42
-#define MTF_UART_RX     GPIO_NUM_41
+#define MTF_UART_TX     GPIO_NUM_42  //42 mtms
+#define MTF_UART_RX     GPIO_NUM_39  //mtck 39
 

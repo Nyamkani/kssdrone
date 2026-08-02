@@ -121,14 +121,14 @@ esp_err_t KSSDrone::ArmedFailsafeFast(const float dt)
         return ESP_OK;
     }
 
-    if (this->battery_monitor_.GetState() == BatteryState::CRITICAL)
-    {
-        this->debug_disarm_reason_ = DisarmReason::BATTERY_CRITICAL;
-        this->landing_mode_ = LandingMode::FAILSAFE;
-        this->ChangeState(DroneState::LANDING);
-        ESP_LOGE(TAG, "CRITICAL battery! -> LANDING(FAILSAFE)");
-        return ESP_OK;
-    }
+    // if (this->battery_monitor_.GetState() == BatteryState::CRITICAL)
+    // {
+    //     this->debug_disarm_reason_ = DisarmReason::BATTERY_CRITICAL;
+    //     this->landing_mode_ = LandingMode::FAILSAFE;
+    //     this->ChangeState(DroneState::LANDING);
+    //     ESP_LOGE(TAG, "CRITICAL battery! -> LANDING(FAILSAFE)");
+    //     return ESP_OK;
+    // }
 
     if (!this->armed_)
     {

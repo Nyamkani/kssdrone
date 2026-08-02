@@ -62,8 +62,8 @@ esp_err_t KssCrsfReceiver::Initialize(
     this->arm_low_seen_ = false;
 
     this->prev_arm_switch_ = false;
-    this->prev_mode_switch_ = false;
-    this->prev_kill_switch_ = false;
+    this->prev_selected_mode_ = DroneMode::RATE_ACRO;
+    this->prev_calibrate_switch_ = false;
 
     this->ResetParser();
 
@@ -251,6 +251,429 @@ void KssCrsfReceiver::MainLoop()
     this->task_handle_ = nullptr;
     vTaskDelete(nullptr);
 }
+
+
+
+//test parser
+// void KssCrsfReceiver::MainLoop()
+// {
+//     uart_event_t event{};
+//     uint8_t rx_buf[128]{};
+
+//     constexpr int64_t STAT_PERIOD_US = 1000000;
+
+//     int64_t stat_start_us = esp_timer_get_time();
+
+//     uint32_t previous_rx_frames =
+//         this->rx_frame_count_.load(std::memory_order_relaxed);
+
+//     uint32_t previous_rc_frames =
+//         this->rc_frame_count_.load(std::memory_order_relaxed);
+
+//     uint32_t previous_crc_errors =
+//         this->crc_error_count_.load(std::memory_order_relaxed);
+
+//     uint32_t previous_frame_errors =
+//         this->frame_error_count_.load(std::memory_order_relaxed);
+
+//     uint32_t uart_event_count = 0;
+//     uint32_t uart_read_count = 0;
+//     uint32_t uart_byte_count = 0;
+//     uint32_t zero_read_count = 0;
+
+//     while (!this->stop_requested_.load(std::memory_order_acquire))
+//     {
+//         const BaseType_t received = xQueueReceive(
+//             this->uart_event_queue_,
+//             &event,
+//             pdMS_TO_TICKS(100)
+//         );
+
+//         if (received == pdTRUE)
+//         {
+//             switch (event.type)
+//             {
+//                 case UART_DATA:
+//                 {
+//                     ++uart_event_count;
+
+//                     size_t remaining =
+//                         static_cast<size_t>(event.size);
+
+//                     while (remaining > 0)
+//                     {
+//                         const size_t request_size =
+//                             std::min(remaining, sizeof(rx_buf));
+
+//                         const int read_len = uart_read_bytes(
+//                             this->uart_num_,
+//                             rx_buf,
+//                             request_size,
+//                             pdMS_TO_TICKS(2)
+//                         );
+
+//                         if (read_len <= 0)
+//                         {
+//                             ++zero_read_count;
+//                             break;
+//                         }
+
+//                         ++uart_read_count;
+//                         uart_byte_count +=
+//                             static_cast<uint32_t>(read_len);
+
+//                         for (int i = 0; i < read_len; ++i)
+//                         {
+//                             this->ProcessByte(rx_buf[i]);
+//                         }
+
+//                         remaining -=
+//                             static_cast<size_t>(read_len);
+//                     }
+
+//                     break;
+//                 }
+
+//                 case UART_FIFO_OVF:
+//                 case UART_BUFFER_FULL:
+//                 {
+//                     ESP_LOGE(
+//                         TAG,
+//                         "UART RX overflow: type=%d",
+//                         static_cast<int>(event.type)
+//                     );
+
+//                     uart_flush_input(this->uart_num_);
+//                     xQueueReset(this->uart_event_queue_);
+//                     this->ResetParser();
+
+//                     this->frame_error_count_.fetch_add(
+//                         1,
+//                         std::memory_order_relaxed
+//                     );
+
+//                     break;
+//                 }
+
+//                 case UART_PARITY_ERR:
+//                 case UART_FRAME_ERR:
+//                 {
+//                     ESP_LOGW(
+//                         TAG,
+//                         "UART RX error: type=%d",
+//                         static_cast<int>(event.type)
+//                     );
+
+//                     this->ResetParser();
+
+//                     this->frame_error_count_.fetch_add(
+//                         1,
+//                         std::memory_order_relaxed
+//                     );
+
+//                     break;
+//                 }
+
+//                 case UART_BREAK:
+//                 {
+//                     ESP_LOGW(TAG, "UART break detected");
+//                     this->ResetParser();
+//                     break;
+//                 }
+
+//                 default:
+//                     break;
+//             }
+//         }
+
+//         /*
+//          * 수신이 끊겨 xQueueReceive()가 타임아웃되어도
+//          * 1초 통계는 계속 출력한다.
+//          */
+//         const int64_t now_us = esp_timer_get_time();
+//         const int64_t elapsed_us = now_us - stat_start_us;
+
+//         if (elapsed_us >= STAT_PERIOD_US)
+//         {
+//             const float elapsed_s =
+//                 static_cast<float>(elapsed_us) / 1000000.0f;
+
+//             const uint32_t current_rx_frames =
+//                 this->rx_frame_count_.load(
+//                     std::memory_order_relaxed
+//                 );
+
+//             const uint32_t current_rc_frames =
+//                 this->rc_frame_count_.load(
+//                     std::memory_order_relaxed
+//                 );
+
+//             const uint32_t current_crc_errors =
+//                 this->crc_error_count_.load(
+//                     std::memory_order_relaxed
+//                 );
+
+//             const uint32_t current_frame_errors =
+//                 this->frame_error_count_.load(
+//                     std::memory_order_relaxed
+//                 );
+
+//             const uint32_t rx_frame_delta =
+//                 current_rx_frames - previous_rx_frames;
+
+//             const uint32_t rc_frame_delta =
+//                 current_rc_frames - previous_rc_frames;
+
+//             const uint32_t crc_error_delta =
+//                 current_crc_errors - previous_crc_errors;
+
+//             const uint32_t frame_error_delta =
+//                 current_frame_errors - previous_frame_errors;
+
+//             ESP_LOGI(
+//                 TAG,
+//                 "CRSF RX: uart=%.1f events/s, "
+//                 "%.1f reads/s, %.1f bytes/s, zero=%lu",
+//                 static_cast<float>(uart_event_count) / elapsed_s,
+//                 static_cast<float>(uart_read_count) / elapsed_s,
+//                 static_cast<float>(uart_byte_count) / elapsed_s,
+//                 static_cast<unsigned long>(zero_read_count)
+//             );
+
+//             ESP_LOGI(
+//                 TAG,
+//                 "CRSF parser: valid=%.1f/s, RC=%.1f/s, "
+//                 "CRC error=%.1f/s, frame error=%.1f/s",
+//                 static_cast<float>(rx_frame_delta) / elapsed_s,
+//                 static_cast<float>(rc_frame_delta) / elapsed_s,
+//                 static_cast<float>(crc_error_delta) / elapsed_s,
+//                 static_cast<float>(frame_error_delta) / elapsed_s
+//             );
+
+//             previous_rx_frames = current_rx_frames;
+//             previous_rc_frames = current_rc_frames;
+//             previous_crc_errors = current_crc_errors;
+//             previous_frame_errors = current_frame_errors;
+
+//             uart_event_count = 0;
+//             uart_read_count = 0;
+//             uart_byte_count = 0;
+//             zero_read_count = 0;
+
+//             stat_start_us = now_us;
+//         }
+//     }
+
+//     ESP_LOGW(TAG, "CRSF receiver parser test stopped");
+
+//     this->task_handle_ = nullptr;
+//     vTaskDelete(nullptr);
+// }
+
+
+///test data/s
+// void KssCrsfReceiver::MainLoop()
+// {
+//     uart_event_t event{};
+//     uint8_t rx_buf[128]{};
+
+//     constexpr int64_t STAT_PERIOD_US = 1000000;
+//     constexpr size_t HEX_SAMPLE_SIZE = 32;
+
+//     int64_t stat_start_us = esp_timer_get_time();
+
+//     uint32_t uart_event_count = 0;
+//     uint32_t uart_read_count = 0;
+//     uint32_t uart_byte_count = 0;
+//     uint32_t zero_read_count = 0;
+
+//     uint8_t hex_sample[HEX_SAMPLE_SIZE]{};
+//     size_t hex_sample_length = 0;
+
+//     while (!this->stop_requested_.load(std::memory_order_acquire))
+//     {
+//         const BaseType_t received = xQueueReceive(
+//             this->uart_event_queue_,
+//             &event,
+//             pdMS_TO_TICKS(100)
+//         );
+
+//         if (received == pdTRUE)
+//         {
+//             switch (event.type)
+//             {
+//                 case UART_DATA:
+//                 {
+//                     ++uart_event_count;
+
+//                     size_t remaining =
+//                         static_cast<size_t>(event.size);
+
+//                     while (remaining > 0)
+//                     {
+//                         const size_t request_size =
+//                             std::min(remaining, sizeof(rx_buf));
+
+//                         const int read_len = uart_read_bytes(
+//                             this->uart_num_,
+//                             rx_buf,
+//                             request_size,
+//                             pdMS_TO_TICKS(2)
+//                         );
+
+//                         if (read_len <= 0)
+//                         {
+//                             ++zero_read_count;
+//                             break;
+//                         }
+
+//                         ++uart_read_count;
+//                         uart_byte_count +=
+//                             static_cast<uint32_t>(read_len);
+
+//                         // 이번 통계 구간에서 처음 들어온 바이트만
+//                         // 최대 32바이트까지 저장한다.
+//                         if (hex_sample_length < HEX_SAMPLE_SIZE)
+//                         {
+//                             const size_t available =
+//                                 HEX_SAMPLE_SIZE - hex_sample_length;
+
+//                             const size_t copy_length = std::min(
+//                                 static_cast<size_t>(read_len),
+//                                 available
+//                             );
+
+//                             std::memcpy(
+//                                 &hex_sample[hex_sample_length],
+//                                 rx_buf,
+//                                 copy_length
+//                             );
+
+//                             hex_sample_length += copy_length;
+//                         }
+
+//                         /*
+//                          * 현재 단계에서는 UART 원시 수신만 확인한다.
+//                          * CRSF 파서까지 함께 시험하려면 아래 코드를
+//                          * 다시 활성화한다.
+//                          *
+//                          * for (int i = 0; i < read_len; ++i)
+//                          * {
+//                          *     this->ProcessByte(rx_buf[i]);
+//                          * }
+//                          */
+
+//                         remaining -=
+//                             static_cast<size_t>(read_len);
+//                     }
+
+//                     break;
+//                 }
+
+//                 case UART_FIFO_OVF:
+//                 case UART_BUFFER_FULL:
+//                 {
+//                     ESP_LOGE(
+//                         TAG,
+//                         "UART RX overflow: type=%d",
+//                         static_cast<int>(event.type)
+//                     );
+
+//                     uart_flush_input(this->uart_num_);
+//                     xQueueReset(this->uart_event_queue_);
+
+//                     this->ResetParser();
+
+//                     this->frame_error_count_.fetch_add(
+//                         1,
+//                         std::memory_order_relaxed
+//                     );
+
+//                     break;
+//                 }
+
+//                 case UART_PARITY_ERR:
+//                 case UART_FRAME_ERR:
+//                 {
+//                     ESP_LOGW(
+//                         TAG,
+//                         "UART RX error: type=%d",
+//                         static_cast<int>(event.type)
+//                     );
+
+//                     this->ResetParser();
+
+//                     this->frame_error_count_.fetch_add(
+//                         1,
+//                         std::memory_order_relaxed
+//                     );
+
+//                     break;
+//                 }
+
+//                 case UART_BREAK:
+//                 {
+//                     ESP_LOGW(TAG, "UART break detected");
+//                     this->ResetParser();
+//                     break;
+//                 }
+
+//                 default:
+//                     break;
+//             }
+//         }
+
+//         /*
+//          * xQueueReceive()가 타임아웃된 경우에도 이 지점에 도달하므로,
+//          * 데이터가 끊기면 0 events/s, 0 bytes/s가 출력된다.
+//          */
+//         const int64_t now_us = esp_timer_get_time();
+//         const int64_t elapsed_us = now_us - stat_start_us;
+
+//         if (elapsed_us >= STAT_PERIOD_US)
+//         {
+//             const float elapsed_s =
+//                 static_cast<float>(elapsed_us) / 1000000.0f;
+
+//             ESP_LOGI(
+//                 TAG,
+//                 "UART RX: %.1f events/s, %.1f reads/s, "
+//                 "%.1f bytes/s, zero_reads=%lu",
+//                 static_cast<float>(uart_event_count) / elapsed_s,
+//                 static_cast<float>(uart_read_count) / elapsed_s,
+//                 static_cast<float>(uart_byte_count) / elapsed_s,
+//                 static_cast<unsigned long>(zero_read_count)
+//             );
+
+//             if (hex_sample_length > 0)
+//             {
+//                 ESP_LOG_BUFFER_HEX_LEVEL(
+//                     TAG,
+//                     hex_sample,
+//                     hex_sample_length,
+//                     ESP_LOG_INFO
+//                 );
+//             }
+//             else
+//             {
+//                 ESP_LOGW(TAG, "No UART data received");
+//             }
+
+//             uart_event_count = 0;
+//             uart_read_count = 0;
+//             uart_byte_count = 0;
+//             zero_read_count = 0;
+//             hex_sample_length = 0;
+
+//             stat_start_us = now_us;
+//         }
+//     }
+
+//     ESP_LOGW(TAG, "CRSF receiver test task stopped");
+
+//     this->task_handle_ = nullptr;
+//     vTaskDelete(nullptr);
+// }
 
 
 static inline float ClampFloat(float v, float lo, float hi)
@@ -507,6 +930,45 @@ bool KssCrsfReceiver::DecodeRcChannels(
     uint16_t ch[CRSF_NUM_CHANNELS]{};
     UnpackCrsfChannels11bit(payload, ch);
 
+
+/*
+ * 디코딩 확인용 임시 로그.
+ * DecodeRcChannels()는 CRSF 수신 태스크 하나에서만 호출된다는 전제.
+ */
+// static int64_t last_channel_log_us = 0;
+// const int64_t debug_now_us = esp_timer_get_time();
+
+// if ((debug_now_us - last_channel_log_us) >= 1000000)
+// {
+//     ESP_LOGI(
+//         TAG,
+//         "CH01-08: %u %u %u %u | %u %u %u %u",
+//         static_cast<unsigned>(ch[0]),
+//         static_cast<unsigned>(ch[1]),
+//         static_cast<unsigned>(ch[2]),
+//         static_cast<unsigned>(ch[3]),
+//         static_cast<unsigned>(ch[4]),
+//         static_cast<unsigned>(ch[5]),
+//         static_cast<unsigned>(ch[6]),
+//         static_cast<unsigned>(ch[7])
+//     );
+
+//     ESP_LOGI(
+//         TAG,
+//         "CH09-16: %u %u %u %u | %u %u %u %u",
+//         static_cast<unsigned>(ch[8]),
+//         static_cast<unsigned>(ch[9]),
+//         static_cast<unsigned>(ch[10]),
+//         static_cast<unsigned>(ch[11]),
+//         static_cast<unsigned>(ch[12]),
+//         static_cast<unsigned>(ch[13]),
+//         static_cast<unsigned>(ch[14]),
+//         static_cast<unsigned>(ch[15])
+//     );
+
+//     last_channel_log_us = debug_now_us;
+// }
+
     ControlPacket pkt{};
     if (!this->BuildControlPacketFromChannels(ch, pkt))
     {
@@ -587,126 +1049,223 @@ bool KssCrsfReceiver::BuildControlPacketFromChannels(
     const float pitch =
         CrsfRawToNorm(ch[RC_CH_PITCH]);
 
+    /*
+     * 상용 FPV 방식의 절대 위치형 throttle.
+     *
+     * 최저   → 0.0
+     * 중간   → 약 0.5
+     * 최고   → 1.0
+     */
     const float throttle =
         CrsfRawToThrottle01(ch[RC_CH_THROTTLE]);
 
     const float yaw =
         CrsfRawToNorm(ch[RC_CH_YAW]);
 
+    /*
+     * SE: ARM/DISARM 유지형 스위치.
+     */
     const bool arm_switch =
         CrsfSwitchHigh(ch[RC_CH_ARM]);
 
-    const bool mode_switch =
-        CrsfSwitchHigh(ch[RC_CH_MODE]);
+    /*
+     * SA: 누르는 동안 PREARM 활성.
+     */
+    const bool prearm_switch =
+        CrsfSwitchHigh(ch[RC_CH_PREARM]);
+    /*
+    * SC 3단 위치 해석.
+    *
+    * LOW      → RATE_ACRO        (mode 0)
+    * MID/HIGH → ANGLE_SELF_LEVEL (mode 1)
+    */
+    const Switch3Position sc_position =
+        DecodeSwitch3Position(ch[RC_CH_MODE]);
 
-    const bool kill_switch =
-        CrsfSwitchHigh(ch[RC_CH_KILL]);
+    const DroneMode selected_mode =
+        sc_position == Switch3Position::LOW
+            ? DroneMode::RATE_ACRO
+            : DroneMode::ANGLE_SELF_LEVEL;
+
+    /*
+     * SB 3단 위치 해석.
+     *
+     * LOW      → NONE
+     * MID/HIGH → SOFT LANDING
+     */
+    const Switch3Position sb_position =
+        DecodeSwitch3Position(ch[RC_CH_LANDING]);
+
+    const bool soft_landing_switch =
+        sb_position != Switch3Position::LOW;
+
+    /*
+     * SD: rising edge에서 캘리브레이션 1회 요청.
+     */
+    const bool calibrate_switch =
+        CrsfSwitchHigh(ch[RC_CH_CALIBRATE]);
 
     out.throttle = throttle;
     out.roll_rad = roll;
     out.pitch_rad = pitch;
     out.yaw_rate_rad_s = yaw;
 
-    out.mode = mode_switch
-        ? DroneMode::RATE_ACRO
-        : DroneMode::ANGLE_SELF_LEVEL;
+    /*
+     * SC의 현재 논리 위치를 모든 ControlPacket에 반영한다.
+     */
+    out.mode = selected_mode;
 
     /*
-     * 첫 정상 RC frame에서는 현재 switch 상태만 획득한다.
+     * 첫 정상 RC frame에서는 현재 스위치 상태만 획득한다.
      *
-     * ARM switch가 HIGH인 상태로 FC/RX가 시작되어도
-     * 자동 ARM_REQUEST를 발생시키지 않는다.
+     * FC/RX 시작 시 스위치가 이미 활성 위치에 있어도
+     * ARM 또는 SOFT LANDING 요청을 발생시키지 않는다.
      */
     if (!this->switch_state_ready_)
     {
-        this->prev_arm_switch_ = arm_switch;
-        this->prev_mode_switch_ = mode_switch;
-        this->prev_kill_switch_ = kill_switch;
+        this->prev_arm_switch_ =
+            arm_switch;
+
+        this->prev_selected_mode_ =
+            selected_mode;
+
+        this->prev_calibrate_switch_ =
+            calibrate_switch;
+
+        this->prev_soft_landing_switch_ =
+            soft_landing_switch;
 
         /*
-        * ARM은 반드시 LOW를 한 번 확인한 뒤
-        * LOW -> HIGH edge에서만 허용한다.
-        */
+         * ARM은 SE의 LOW 상태를 한 번 확인한 뒤,
+         * LOW → HIGH edge에서만 허용한다.
+         */
         this->arm_low_seen_ = !arm_switch;
+
         this->switch_state_ready_ = true;
 
         /*
-        * 시작 시 KILL이 이미 HIGH인 경우에도
-        * emergency 명령을 발생시킨다.
-        */
-        if (kill_switch)
-        {
-            this->StartCommandEvent(
-                static_cast<uint8_t>(CMD_EMERGENCY_STOP));
-        }
-        else
-        {
-        /*
-         * 최초 CH6 상태를 FC mode에 동기화
+         * 최초 SC 위치를 FC 비행 모드에 동기화한다.
          */
-        this->StartCommandEvent(static_cast<uint8_t>(CMD_SET_MODE));
-        }
+        this->StartCommandEvent(
+            static_cast<uint8_t>(CMD_SET_MODE));
     }
     else
     {
         /*
-        * KILL rising edge: 최우선
-        */
-        if (kill_switch && !this->prev_kill_switch_)
+         * SE falling edge:
+         *
+         * PREARM과 throttle 상태에 관계없이
+         * 즉시 DISARM 요청.
+         */
+        if (!arm_switch &&
+            this->prev_arm_switch_)
         {
             this->StartCommandEvent(
-                static_cast<uint8_t>(CMD_EMERGENCY_STOP));
+                static_cast<uint8_t>(
+                    CMD_DISARM_REQUEST));
         }
         /*
-        * ARM falling edge: DISARM
-        */
-        else if (!arm_switch && this->prev_arm_switch_)
-        {
-            this->StartCommandEvent(
-                static_cast<uint8_t>(CMD_DISARM_REQUEST));
-        }
-        /*
-        * ARM rising edge:
-        * 한 번 이상 LOW 확인 + KILL 해제 상태에서만 허용
-        */
+         * SE rising edge:
+         *
+         * - SE LOW를 한 번 이상 확인
+         * - SA PREARM을 누르고 있음
+         * - throttle이 최저 범위
+         *
+         * 위 조건을 모두 만족할 때만 ARM 요청.
+         */
         else if (arm_switch &&
-                !this->prev_arm_switch_ &&
-                this->arm_low_seen_ &&
-                !kill_switch)
+                 !this->prev_arm_switch_ &&
+                 this->arm_low_seen_ &&
+                 prearm_switch &&
+                 throttle <= ARM_THROTTLE_MAX)
         {
             this->StartCommandEvent(
-                static_cast<uint8_t>(CMD_ARM_REQUEST));
+                static_cast<uint8_t>(
+                    CMD_ARM_REQUEST));
         }
         /*
-        * MODE 양방향 변경
-        */
-        else if (mode_switch != this->prev_mode_switch_)
+         * SB:
+         *
+         * LOW → MID/HIGH가 된 순간에만
+         * SOFT LANDING을 1회 요청한다.
+         *
+         * MID ↔ HIGH 이동은 같은 논리 상태이므로
+         * 추가 명령을 발생시키지 않는다.
+         */
+        else if (soft_landing_switch &&
+                 !this->prev_soft_landing_switch_)
         {
             this->StartCommandEvent(
-                static_cast<uint8_t>(CMD_SET_MODE));
+                static_cast<uint8_t>(
+                    CMD_SOFT_LANDING));
+        }
+        /*
+         * SC:
+         *
+         * LOW와 MID/HIGH 사이의 논리 모드가
+         * 변경된 경우에만 모드 변경 요청.
+         *
+         * MID ↔ HIGH 이동은 모두 RATE이므로
+         * 모드 변경을 발생시키지 않는다.
+         */
+        else if (selected_mode !=
+                 this->prev_selected_mode_)
+        {
+            this->StartCommandEvent(
+                static_cast<uint8_t>(
+                    CMD_SET_MODE));
+        }
+        /*
+         * SD rising edge:
+         *
+         * 자세 기준 및 gyro bias
+         * 캘리브레이션 요청.
+         *
+         * DISARM 및 기체 정지 여부는
+         * FC 상태 머신에서 최종 검사한다.
+         */
+        else if (calibrate_switch &&
+                 !this->prev_calibrate_switch_)
+        {
+            this->StartCommandEvent(
+                static_cast<uint8_t>(
+                    CMD_LEVEL_CALIBRATE));
         }
 
+        /*
+         * SE가 LOW인 것을 확인해야
+         * 다음 ARM을 허용한다.
+         */
         if (!arm_switch)
         {
             this->arm_low_seen_ = true;
         }
 
         /*
-        * 다음 RC frame의 edge 검출 기준 갱신
-        */
-        this->prev_arm_switch_ = arm_switch;
-        this->prev_mode_switch_ = mode_switch;
-        this->prev_kill_switch_ = kill_switch;
+         * 다음 RC frame의 edge 검출 기준 갱신.
+         */
+        this->prev_arm_switch_ =
+            arm_switch;
+
+        this->prev_selected_mode_ =
+            selected_mode;
+
+        this->prev_calibrate_switch_ =
+            calibrate_switch;
+        
+        this->prev_soft_landing_switch_ =
+            soft_landing_switch;
     }
 
     /*
-     * 새 명령이면 동일 cmd_seq/cmd_flags를 5회 반복하고,
+     * 새 명령이면 같은 cmd_seq/cmd_flags를 5회 반복하고,
      * 일반 frame이면 CMD_NONE을 넣는다.
      */
     this->FillCommandFields(out);
 
     return true;
 }
+
 
 //[Sync][Length][Type][Payload][CRC]
 

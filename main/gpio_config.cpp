@@ -166,6 +166,13 @@ esp_err_t BoardInstallIMUISR(gpio_isr_t isr_handler, void *arg)
 
 esp_err_t BoardUartInit()
 {
+
+    // 내부 IO MUX 맵핑을 완전히 리셋하여 일반 GPIO 모드로 돌려놓습니다.
+    gpio_reset_pin(ELRS_UART_TX);  // MTDO
+    gpio_reset_pin(ELRS_UART_RX);  // MTDI
+
+    //  esp_rom_gpio_connect_in_signal(GPIO_MATRIX_CONST_ONE_INPUT, 0, false); 
+
     {
         uart_config_t cfg{};
         cfg.baud_rate = 420000;

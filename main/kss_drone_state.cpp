@@ -814,8 +814,8 @@ void KSSDrone::EnterState(const DroneState to_state)
             this->control_seq_ready_ = false;
             this->last_control_seq_ = 0;
 
-            this->command_seq_ready_ = false;
-            this->last_command_seq_ = 0;
+            // this->command_seq_ready_ = false;
+            // this->last_command_seq_ = 0;
 
             //throttle ramp
             this->throttle_prev_ = 0.0f;
