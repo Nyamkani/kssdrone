@@ -145,21 +145,7 @@ enum class Switch3Position : uint8_t
 };
 
 
-static Switch3Position DecodeSwitch3Position(const uint16_t raw)
-{
-    if (raw < CRSF_SWITCH_LOW_MID_THRESHOLD)
-    {
-        return Switch3Position::LOW;
-    }
-
-    if (raw < CRSF_SWITCH_MID_HIGH_THRESHOLD)
-    {
-        return Switch3Position::MID;
-    }
-
-    return Switch3Position::HIGH;
-}
-
+Switch3Position DecodeSwitch3Position(const uint16_t raw);
 
 
 class KssCrsfReceiver

@@ -14,6 +14,8 @@
 #include "esp_log.h"
 #include "esp_err.h"
 
+#include "hal/uart_ll.h" // 상단에 헤더 추가 필수
+
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -17,5 +17,6 @@
     "--compile-commands-dir=${workspaceFolder}/build"
   ],
   "idf.flashType": "UART",
-  "mcu-debug.rtos-views.showRTOS": true
+  "mcu-debug.rtos-views.showRTOS": true,
+  "idf.currentSetup": "/home/kssvm/esp/v6.0/esp-idf"
 }

@@ -64,11 +64,11 @@ esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
     this->telemetry_send_dt_ += dt;
 
     // if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS && rx_dt_us > 2000)
-    if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS)
+    if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_S)
     {
-        while (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS)
+        while (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_S)
         {
-            this->telemetry_send_dt_ -= CHECK_SEND_TELEMETRY_MS;
+            this->telemetry_send_dt_ -= CHECK_SEND_TELEMETRY_S;
         }
 
         this->tpkt_.mode = static_cast<uint8_t>(this->drone_mode_);
@@ -90,12 +90,34 @@ esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
     if (this->state_ == DroneState::ARMED || this->state_ == DroneState::LANDING)
     {
         this->log_send_dt_ += dt;
-        if (this->log_send_dt_ >= CHECK_SEND_LOG_MS)
+        if (this->log_send_dt_ >= CHECK_SEND_LOG_S)
         {
-            while (this->log_send_dt_ >= CHECK_SEND_LOG_MS)
+            while (this->log_send_dt_ >= CHECK_SEND_LOG_S)
             {
-                this->log_send_dt_ -= CHECK_SEND_LOG_MS;
+                this->log_send_dt_ -= CHECK_SEND_LOG_S;
             }
+
+
+            #if ENABLE_CMD_DETAIL_LOG
+
+                ESP_LOGI(TAG,
+                        "yaw=%.3f thr_cmd=%.3f thr_used=%.3f gyro_z=%.3f state=%u",
+                        this->log_.yaw_out,
+                        this->log_.throttle_cmd,
+                        this->log_.throttle_used,
+                        this->log_.gyro_z_rad_s,
+                        static_cast<unsigned>(this->log_.state));
+
+                // ESP_LOGI(TAG,
+                //         "dt=%.4f ramp_up=%.3f takeoff_up=%.3f ramp_down=%.3f",
+                //         this->log_.dt,
+                //         THROTTLE_RAMP_UP_RATE,
+                //         TAKEOFF_THROTTLE_RAMP_UP_RATE,
+                //         THROTTLE_RAMP_DOWN_RATE);
+
+            #endif
+
+
         }
     }
 

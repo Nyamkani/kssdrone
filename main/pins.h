@@ -33,7 +33,11 @@ M4  CW   -> real -> m3
 #define ELRS_UART_TX    GPIO_NUM_40  //40 MTDO
 #define ELRS_UART_RX    GPIO_NUM_41  //41 MTDI
 
-#define MTF_UART_NUM    UART_NUM_2
-#define MTF_UART_TX     GPIO_NUM_42  //42 mtms
-#define MTF_UART_RX     GPIO_NUM_39  //mtck 39
+// #define MTF_UART_NUM    UART_NUM_2
+// #define MTF_UART_TX     GPIO_NUM_39  //42 mtms
+// #define MTF_UART_RX     GPIO_NUM_42  //39 mtck 
+
+#define SMARTAUDIO_UART_NUM        UART_NUM_2
+#define SMARTAUDIO_UART_TX_PIN        GPIO_NUM_42 //39
+#define SMARTAUDIO_UART_RX_PIN        GPIO_NUM_39 //42
 

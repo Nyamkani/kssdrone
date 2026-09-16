@@ -13,7 +13,8 @@
     #define MAX_PITCH_ANGLE_RAD   DEG2RAD(40.0f)
 
     // thrust
-    #define THRUST_EXPO                0.5f
+    #define THRUST_EXPO                0.50f
+    #define THRUST_LOW_CURVE_END       0.65f
 
     // PID authority
     #define PID_MIN_AUTHORITY_RP       0.5f
@@ -69,9 +70,12 @@
 
 
     // throttle ramp
-    #define THROTTLE_RAMP_UP_RATE           1.2f
-    #define TAKEOFF_THROTTLE_RAMP_UP_RATE   0.8f
-    #define THROTTLE_RAMP_DOWN_RATE         1.0f
+    #define THROTTLE_RAMP_UP_RATE           0.3f//1.2f
+    #define TAKEOFF_THROTTLE_RAMP_UP_RATE   0.2f//0.8f
+    #define THROTTLE_RAMP_DOWN_RATE         0.35f//1.0f
+
+    #define SELF_LEVEL_THROTTLE_RATE       0.4f
+    #define SELF_LEVEL_THROTTLE_DEADBAND   0.05f
 
     // airborne detect
     #define AIRBORNE_THROTTLE_ENTER     0.35f
@@ -160,6 +164,7 @@
 
     // thrust
     #define THRUST_EXPO                0.5f
+    #define THRUST_LOW_CURVE_END       0.65f
 
     // PID authority
     #define PID_MIN_AUTHORITY_RP       0.5f
@@ -215,9 +220,12 @@
 
 
     // throttle ramp
-    #define THROTTLE_RAMP_UP_RATE           1.2f
-    #define TAKEOFF_THROTTLE_RAMP_UP_RATE   0.8f
-    #define THROTTLE_RAMP_DOWN_RATE         1.0f
+    #define THROTTLE_RAMP_UP_RATE           0.6f//1.2f
+    #define TAKEOFF_THROTTLE_RAMP_UP_RATE   0.4f//0.8f
+    #define THROTTLE_RAMP_DOWN_RATE         0.5f//1.0f
+
+    #define SELF_LEVEL_THROTTLE_RATE       0.5f
+    #define SELF_LEVEL_THROTTLE_DEADBAND   0.03f
 
     // airborne detect
     #define AIRBORNE_THROTTLE_ENTER     0.35f
@@ -301,6 +309,7 @@
 
        // thrust
     #define THRUST_EXPO                0.5f
+    #define THRUST_LOW_CURVE_END    0.65f
 
     // PID authority
     #define PID_MIN_AUTHORITY_RP       0.5f

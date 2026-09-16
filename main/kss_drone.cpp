@@ -66,6 +66,14 @@ esp_err_t KSSDrone::Initialize(board_handles_t bhandle)
         return ret;
     }
 
+    // ret = smartaudio_.Initialize();
+
+    // if (ret != ESP_OK)
+    // {
+    //     ESP_LOGI(TAG, "smartaudio_.Initialize() failed with error: %d", ret);
+    //     return ret;
+    // }
+
     ret = this->battery_monitor_.Initialize();
     if (ret != ESP_OK)
     {
@@ -80,7 +88,9 @@ esp_err_t KSSDrone::Initialize(board_handles_t bhandle)
         return ret;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    // vTaskDelay(pdMS_TO_TICKS(1000));
+
+    // this->smartaudio_.PrintSettings();
 
     ret = this->StartTask();
     if (ret != ESP_OK)

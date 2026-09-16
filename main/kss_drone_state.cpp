@@ -780,6 +780,9 @@ void KSSDrone::EnterState(const DroneState to_state)
             this->drone_mode_ = DroneMode::RATE_ACRO;
             this->dt_.Reset();
             this->led_controller_.SetLedInitMode();
+
+            //camera
+            // this->smartaudio_.SetPowerDbm(14U);
             break;
 
         case DroneState::IMU_BIAS_CALIBRATING:
@@ -819,6 +822,7 @@ void KSSDrone::EnterState(const DroneState to_state)
 
             //throttle ramp
             this->throttle_prev_ = 0.0f;
+            this->self_level_throttle_ = 0.0f;
             this->tilt_trigger_dt_ = 0.0f;
             this->disarmed_settle_dt_ = 0.0f;
             //landing
@@ -848,11 +852,17 @@ void KSSDrone::EnterState(const DroneState to_state)
             this->yaw_hold_initialized_ = false;
             this->yaw_hold_rad_ = 0.0f;
 
+            //camera
+            // this->smartaudio_.SetPowerDbm(14U);
+
             break;
 
         case DroneState::ARMING:
             this->arming_check_dt_ = 0.0f;
             this->led_controller_.SetLedArmingMode();
+
+            //camera
+            // this->smartaudio_.SetPowerDbm(20U);
             break;
 
         case DroneState::ARMED:
