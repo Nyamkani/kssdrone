@@ -63,14 +63,28 @@ static constexpr int64_t CRSF_COMMAND_TIMEOUT_US = 500*1000;
  *
  * 모듈 도착 후 로그로 실제 채널을 확인하고 이 값만 바꾸면 된다.
  */
-static constexpr int RC_CH_ROLL     = 0; // CH1
-static constexpr int RC_CH_PITCH    = 1; // CH2
-static constexpr int RC_CH_THROTTLE = 2; // CH3
-static constexpr int RC_CH_YAW      = 3; // CH4
+static constexpr size_t RC_CH_ROLL       = 0;  // CH1
+static constexpr size_t RC_CH_PITCH      = 1;  // CH2
+static constexpr size_t RC_CH_THROTTLE   = 2;  // CH3
+static constexpr size_t RC_CH_YAW        = 3;  // CH4
 
-static constexpr int RC_CH_ARM      = 4; // CH5
-static constexpr int RC_CH_MODE     = 5; // CH6
-static constexpr int RC_CH_KILL     = 6; // CH7
+static constexpr size_t RC_CH_ARM        = 4;  // CH5, SE
+static constexpr size_t RC_CH_PREARM     = 5;  // CH6, SA
+static constexpr size_t RC_CH_LANDING    = 6;  // CH7, SB
+static constexpr size_t RC_CH_MODE       = 7;  // CH8, SC
+static constexpr size_t RC_CH_CALIBRATE  = 8;  // CH9, SD
+static constexpr size_t RC_CH_AUX_DIAL   = 9;  // CH10, S1
+
+
+static constexpr float ARM_THROTTLE_MAX = 0.05f;
+
+/*
+ * SC:
+ * Low  ≈ 191  → ANGLE
+ * Mid  ≈ 997  → RATE
+ * High ≈ 1792 → RATE
+ */
+static constexpr uint16_t MODE_RATE_THRESHOLD = 600;
 
 /*
  * CRSF raw range.
@@ -101,6 +115,37 @@ struct CrsfLinkStatistics
     int64_t timestamp_us{0};
 };
 
+
+/*
+* 일반적인 CRSF 3단 스위치 값:
+*
+* LOW  ≈ 172
+* MID  ≈ 992
+* HIGH ≈ 1811
+*/
+static constexpr uint16_t
+    CRSF_SWITCH_LOW_MID_THRESHOLD = 600;
+
+static constexpr uint16_t
+    CRSF_SWITCH_MID_HIGH_THRESHOLD = 1400;
+
+
+/*
+* SB 논리 상태:
+*
+* false = LOW
+* true  = MID/HIGH
+*/
+
+enum class Switch3Position : uint8_t
+{
+    LOW = 0,
+    MID,
+    HIGH
+};
+
+
+Switch3Position DecodeSwitch3Position(const uint16_t raw);
 
 
 class KssCrsfReceiver
@@ -204,8 +249,10 @@ class KssCrsfReceiver
         bool arm_low_seen_{false};
 
         bool prev_arm_switch_{false};
-        bool prev_mode_switch_{false};
-        bool prev_kill_switch_{false};
+        DroneMode prev_selected_mode_{DroneMode::RATE_ACRO};
+        bool prev_calibrate_switch_{false};
+
+        bool prev_soft_landing_switch_{false};
 
         std::atomic_int64_t last_rc_time_us_{0};
 
@@ -213,6 +260,7 @@ class KssCrsfReceiver
         std::atomic_uint32_t rc_frame_count_{0};
         std::atomic_uint32_t crc_error_count_{0};
         std::atomic_uint32_t frame_error_count_{0};
+
 
         uint8_t telemetry_slot_{0};
 };

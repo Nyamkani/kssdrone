@@ -9,6 +9,7 @@
 
 // #include "espnow_interface.h"
 #include "kss_crsf_receiver.h"
+#include "kss_smartaudio.h"
 
 #include "adc_battery.h"
 #include "led.h"
@@ -68,8 +69,7 @@ Landing -> Disarmed
 */
 
 //firmware version
-#define FW_VERSION    1.2f
-
+#define FW_VERSION    1.3f
 // auto gyro bias calibration
 #define GYRO_BIAS_CALIB_TIME_S        1.0f
 #define GYRO_BIAS_MAX_ABS_RAD_S       0.15f
@@ -94,8 +94,8 @@ Landing -> Disarmed
 
 //BackgroundJob 
 #define CHECK_BATTERY_PERIOD_S  0.05f                // Check battery every 50ms (20Hz)
-#define CHECK_SEND_TELEMETRY_MS 0.1f      // Send telemetry every 100ms (10Hz)
-#define CHECK_SEND_LOG_MS       0.1f            // Send log everyt 100ms (10hz)
+#define CHECK_SEND_TELEMETRY_S 0.1f      // Send telemetry every 100ms (10Hz)
+#define CHECK_SEND_LOG_S       0.1f            // Send log everyt 100ms (10hz)
 
 //ekf ready flag
 #define EKF_READY_TIME_S        1.0f
@@ -217,6 +217,7 @@ class KSSDrone
         IMUInterface imu_interface_;
         // EspNowInterface esp_now_interface_;
         KssCrsfReceiver crsf_receiver_;
+        // KssSmartAudio smartaudio_;
 
 
         FlightPIDController pid_controller_;
@@ -328,6 +329,7 @@ class KSSDrone
 
         //throttle Ramp
         float throttle_prev_ = 0.0f;
+        float self_level_throttle_ = 0.0f;
 
         //check pid controller saturated
         bool output_saturated_ = false;

@@ -4,6 +4,8 @@
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 
+#include "soc/usb_serial_jtag_reg.h"
+
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
@@ -11,6 +13,8 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_err.h"
+
+#include "hal/uart_ll.h" // 상단에 헤더 추가 필수
 
 #ifdef __cplusplus
 extern "C" {

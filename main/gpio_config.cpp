@@ -166,6 +166,13 @@ esp_err_t BoardInstallIMUISR(gpio_isr_t isr_handler, void *arg)
 
 esp_err_t BoardUartInit()
 {
+
+    // 내부 IO MUX 맵핑을 완전히 리셋하여 일반 GPIO 모드로 돌려놓습니다.
+    gpio_reset_pin(ELRS_UART_TX);  // MTDO
+    gpio_reset_pin(ELRS_UART_RX);  // MTDI
+
+    //  esp_rom_gpio_connect_in_signal(GPIO_MATRIX_CONST_ONE_INPUT, 0, false); 
+
     {
         uart_config_t cfg{};
         cfg.baud_rate = 420000;
@@ -190,23 +197,70 @@ esp_err_t BoardUartInit()
                                      UART_PIN_NO_CHANGE));
     }
 
-    {
-        uart_config_t cfg{};
-        cfg.baud_rate = 115200;   // MTF-02P
-        cfg.data_bits = UART_DATA_8_BITS;
-        cfg.parity    = UART_PARITY_DISABLE;
-        cfg.stop_bits = UART_STOP_BITS_1;
-        cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
-        cfg.source_clk = UART_SCLK_DEFAULT;
+    // {
+    //     uart_config_t cfg{};
+    //     cfg.baud_rate = 115200;   // MTF-02P
+    //     cfg.data_bits = UART_DATA_8_BITS;
+    //     cfg.parity    = UART_PARITY_DISABLE;
+    //     cfg.stop_bits = UART_STOP_BITS_1;
+    //     cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+    //     cfg.source_clk = UART_SCLK_DEFAULT;
 
-        ESP_ERROR_CHECK(uart_driver_install(MTF_UART_NUM, 2048, 0, 0, nullptr, 0));
-        ESP_ERROR_CHECK(uart_param_config(MTF_UART_NUM, &cfg));
-        ESP_ERROR_CHECK(uart_set_pin(MTF_UART_NUM,
-                                     MTF_UART_TX,
-                                     MTF_UART_RX,
-                                     UART_PIN_NO_CHANGE,
-                                     UART_PIN_NO_CHANGE));
-    }
+    //     ESP_ERROR_CHECK(uart_driver_install(MTF_UART_NUM, 2048, 0, 0, nullptr, 0));
+    //     ESP_ERROR_CHECK(uart_param_config(MTF_UART_NUM, &cfg));
+    //     ESP_ERROR_CHECK(uart_set_pin(MTF_UART_NUM,
+    //                                  MTF_UART_TX,
+    //                                  MTF_UART_RX,
+    //                                  UART_PIN_NO_CHANGE,
+    //                                  UART_PIN_NO_CHANGE));
+    // }
+
+    gpio_reset_pin(SMARTAUDIO_UART_TX_PIN);  // MTCK
+
+    //8n2 4800baud
+    // {
+    //     // uart_config_t smartaudio_uart_config = {
+    //     //     .baud_rate = 4800,
+    //     //     .data_bits = UART_DATA_8_BITS,
+    //     //     .parity = UART_PARITY_DISABLE,
+    //     //     .stop_bits = UART_STOP_BITS_2,
+    //     //     .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    //     //     .rx_flow_ctrl_thresh = 0,
+    //     //     .source_clk = UART_SCLK_DEFAULT,
+    //     //     .flags = {
+    //     //         .allow_pd = 0,
+    //     //         .backup_before_sleep = 0,
+    //     //     },   
+    //     // };
+
+    //     uart_config_t smartaudio_uart_config{};
+    //     smartaudio_uart_config.baud_rate = 4800;//4800;
+    //     smartaudio_uart_config.data_bits = UART_DATA_8_BITS;
+    //     smartaudio_uart_config.parity    = UART_PARITY_DISABLE;
+    //     smartaudio_uart_config.stop_bits = UART_STOP_BITS_2;
+    //     smartaudio_uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+    //     smartaudio_uart_config.source_clk = UART_SCLK_DEFAULT;
+    //     smartaudio_uart_config.rx_flow_ctrl_thresh = 0;
+
+
+
+    //     ESP_ERROR_CHECK(uart_driver_install(    
+    //         SMARTAUDIO_UART_NUM,
+    //         256,  //SMARTAUDIO_RX_BUFFER_SIZE  256
+    //         256,
+    //         0,
+    //         nullptr,
+    //         0));
+
+    //     ESP_ERROR_CHECK(uart_param_config(SMARTAUDIO_UART_NUM, &smartaudio_uart_config));
+    //     ESP_ERROR_CHECK(uart_set_pin(SMARTAUDIO_UART_NUM,
+    //                                  SMARTAUDIO_UART_TX_PIN,
+    //                                  SMARTAUDIO_UART_TX_PIN,
+    //                                  UART_PIN_NO_CHANGE,
+    //                                  UART_PIN_NO_CHANGE));
+
+    // }
+
 
     return ESP_OK;
 }

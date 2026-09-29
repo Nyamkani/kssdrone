@@ -16,5 +16,7 @@
     "--query-driver=/home/kssvm/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc",
     "--compile-commands-dir=${workspaceFolder}/build"
   ],
-  "idf.flashType": "UART"
+  "idf.flashType": "UART",
+  "mcu-debug.rtos-views.showRTOS": true,
+  "idf.currentSetup": "/home/kssvm/esp/v6.0/esp-idf"
 }

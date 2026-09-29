@@ -64,11 +64,11 @@ esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
     this->telemetry_send_dt_ += dt;
 
     // if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS && rx_dt_us > 2000)
-    if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS)
+    if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_S)
     {
-        while (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS)
+        while (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_S)
         {
-            this->telemetry_send_dt_ -= CHECK_SEND_TELEMETRY_MS;
+            this->telemetry_send_dt_ -= CHECK_SEND_TELEMETRY_S;
         }
 
         this->tpkt_.mode = static_cast<uint8_t>(this->drone_mode_);
@@ -90,12 +90,34 @@ esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
     if (this->state_ == DroneState::ARMED || this->state_ == DroneState::LANDING)
     {
         this->log_send_dt_ += dt;
-        if (this->log_send_dt_ >= CHECK_SEND_LOG_MS)
+        if (this->log_send_dt_ >= CHECK_SEND_LOG_S)
         {
-            while (this->log_send_dt_ >= CHECK_SEND_LOG_MS)
+            while (this->log_send_dt_ >= CHECK_SEND_LOG_S)
             {
-                this->log_send_dt_ -= CHECK_SEND_LOG_MS;
+                this->log_send_dt_ -= CHECK_SEND_LOG_S;
             }
+
+
+            #if ENABLE_CMD_DETAIL_LOG
+
+                ESP_LOGI(TAG,
+                        "yaw=%.3f thr_cmd=%.3f thr_used=%.3f gyro_z=%.3f state=%u",
+                        this->log_.yaw_out,
+                        this->log_.throttle_cmd,
+                        this->log_.throttle_used,
+                        this->log_.gyro_z_rad_s,
+                        static_cast<unsigned>(this->log_.state));
+
+                // ESP_LOGI(TAG,
+                //         "dt=%.4f ramp_up=%.3f takeoff_up=%.3f ramp_down=%.3f",
+                //         this->log_.dt,
+                //         THROTTLE_RAMP_UP_RATE,
+                //         TAKEOFF_THROTTLE_RAMP_UP_RATE,
+                //         THROTTLE_RAMP_DOWN_RATE);
+
+            #endif
+
+
         }
     }
 
@@ -172,6 +194,31 @@ void KSSDrone::HandleCommandEvents()
         return;
     }
 
+    if (cmd.mode <= static_cast<uint8_t>(
+                        DroneMode::ANGLE_SELF_LEVEL) &&
+        this->state_ == DroneState::DISARMED)
+    {
+        const DroneMode new_mode =
+            static_cast<DroneMode>(cmd.mode);
+
+        if (new_mode != this->drone_mode_)
+        {
+            const DroneMode old_mode = this->drone_mode_;
+
+            this->pid_controller_.Reset();
+            this->throttle_prev_ = 0.0f;
+            this->output_saturated_ = false;
+            this->drone_mode_ = new_mode;
+
+            ESP_LOGI(
+                TAG,
+                "Drone Mode Changed: %u -> %u",
+                static_cast<unsigned>(old_mode),
+                static_cast<unsigned>(new_mode));
+        }
+    }
+
+
     if (cmd.cmd_flags == CMD_NONE)
     {
         return;
@@ -247,35 +294,6 @@ void KSSDrone::HandleCommandEvents()
         ESP_LOGI(TAG, "GYRO CALIBRATE requested");
     }
 
-    if (cmd.cmd_flags & CMD_SET_MODE)
-    {
-        if (cmd.mode > static_cast<uint8_t>(DroneMode::ANGLE_SELF_LEVEL))
-        {
-            ESP_LOGW(TAG, "Invalid drone mode: %u", cmd.mode);
-        }
-        else if (this->state_ == DroneState::DISARMED)
-        {
-            const DroneMode old_mode = this->drone_mode_;
-            const DroneMode new_mode = static_cast<DroneMode>(cmd.mode);
-
-            if (old_mode != new_mode)
-            {
-                this->pid_controller_.Reset();
-                this->throttle_prev_ = 0.0f;
-                this->output_saturated_ = false;
-                this->drone_mode_ = new_mode;
-
-                ESP_LOGI(TAG, "Drone Mode Changed: %u -> %u",
-                        static_cast<unsigned>(old_mode),
-                        static_cast<unsigned>(new_mode));
-            }
-        }
-        else
-        {
-            ESP_LOGW(TAG, "Mode change rejected: only allowed in DISARMED");
-        }
-    }
-
     if (cmd.cmd_flags & CMD_ARM_REQUEST)
     {
         const bool safe_to_arm =
@@ -284,45 +302,51 @@ void KSSDrone::HandleCommandEvents()
             this->ekf_ready_ &&
             this->disarmed_settle_dt_ >= DISARM_SETTLE_TIME &&
             cmd.throttle < 0.05f &&
-            this->armed_ == false;
+            !this->armed_;
 
         if (safe_to_arm)
         {
             this->armed_ = true;
             this->pid_controller_.Reset();
             this->throttle_prev_ = 0.0f;
+            this->landing_throttle_ = 0.0f;
             this->output_saturated_ = false;
+
+            ESP_LOGI(TAG, "ARM_REQUEST accepted");
+
+            this->ChangeState(DroneState::ARMING);
         }
         else
         {
-            ESP_LOGW(TAG, "ARM_REQUEST rejected");
-        }        
+            ESP_LOGW(
+                TAG,
+                "ARM rejected: state=%u imu=%d ekf=%d "
+                "settle=%.3f/%.3f thr=%.3f armed=%d",
+                static_cast<unsigned>(this->state_),
+                static_cast<int>(this->imu_bias_ready_),
+                static_cast<int>(this->ekf_ready_),
+                this->disarmed_settle_dt_,
+                DISARM_SETTLE_TIME,
+                cmd.throttle,
+                static_cast<int>(this->armed_));
+        }
+
         return;
     }
 
     if (cmd.cmd_flags & CMD_DISARM_REQUEST)
     {
-        const bool flight_active =
-            this->state_ == DroneState::ARMED ||
-            this->state_ == DroneState::LANDING;
-
-        const bool likely_airborne =
-            flight_active &&
-            (this->is_airborne_ ||
-            this->throttle_prev_ >
-                (IDLE_THROTTLE + 0.05f) ||
-            this->landing_throttle_ >
-                (IDLE_THROTTLE + 0.05f));
-
-        if (likely_airborne)
-        {
-            ESP_LOGW(
-                TAG,
-                "DISARM_REQUEST rejected in airborne");
-            return;
-        }
-
         this->armed_ = false;
+        this->landing_throttle_ = 0.0f;
+        this->throttle_prev_ = 0.0f;
+        this->output_saturated_ = false;
+
+        this->pid_controller_.ResetIntegrator();
+        this->motor_interface_.SetMotorOutput(0, 0, 0, 0);
+
+        ESP_LOGW(TAG, "DISARM_REQUEST accepted");
+
+        this->ChangeState(DroneState::DISARMED);
         return;
     }
 

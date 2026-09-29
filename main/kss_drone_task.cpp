@@ -228,21 +228,31 @@ void KSSDrone::MainLoop()
          *
          * 1kHz에서는 vTaskDelayUntil()이 이미 block을 만들기 때문에 사용하지 않는다.
          */
-        force_idle_elapsed_dt += dt;
 
-        if (force_idle_elapsed_dt >= MAIN_LOOP_FORCE_IDLE_INTERVAL_SEC)
+
+        if (forced_idle_delay)
         {
-            this->loop_stats_.wdt_guard++;
-
-            vTaskDelay(1);
-
-            next_loop_us = esp_timer_get_time();
-
+            // Overrun guard에서 이미 쉬었으므로 주기 타이머도 초기화
             force_idle_elapsed_dt = 0.0f;
-            armed_overrun_score = 0;
-            armed_guard_elapsed_dt = 0.0f;
+        }
+        else
+        {
+            force_idle_elapsed_dt += dt;
 
-            forced_idle_delay = true;
+            if (force_idle_elapsed_dt >= MAIN_LOOP_FORCE_IDLE_INTERVAL_SEC)
+            {
+                this->loop_stats_.wdt_guard++;
+
+                vTaskDelay(1);
+
+                next_loop_us = esp_timer_get_time();
+
+                force_idle_elapsed_dt = 0.0f;
+                armed_overrun_score = 0;
+                armed_guard_elapsed_dt = 0.0f;
+
+                forced_idle_delay = true;
+            }
         }
 #endif
 

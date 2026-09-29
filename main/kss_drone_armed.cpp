@@ -252,46 +252,159 @@ esp_err_t KSSDrone::ArmedCommandMedium(const float dt, ArmedContext& ctx)
     this->pitch_target_smooth_rad_ = target.pitch_rad;
     this->yaw_rate_target_smooth_rad_s_ = target.yaw_rate_rad_s;
 
-    const bool throttle_cut =
-        target.throttle <= CUT_OFF_THROTTLE;
+    // const bool throttle_cut =
+    //     target.throttle <= CUT_OFF_THROTTLE;
 
-    float throttle_rate_cmd = 0.0f;
+    // float throttle_rate_cmd = 0.0f;
 
-    if (throttle_cut)
+    // if (throttle_cut)
+    // {
+    //     target.throttle = 0.0f;
+    //     this->throttle_prev_ = 0.0f;
+    // }
+    // else
+    // {
+    //     float ramp_up_rate = THROTTLE_RAMP_UP_RATE;
+    //     if (!this->is_airborne_)
+    //     {
+    //         ramp_up_rate = TAKEOFF_THROTTLE_RAMP_UP_RATE;
+    //     }
+
+    //     const float max_up = ramp_up_rate * cmd_dt;
+    //     const float max_down = THROTTLE_RAMP_DOWN_RATE * cmd_dt;
+
+    //     float delta = target.throttle - this->throttle_prev_;
+
+    //     if (delta > 0.0f)
+    //     {
+    //         delta = std::min(delta, max_up);
+    //     }
+    //     else
+    //     {
+    //         delta = std::max(delta, -max_down);
+    //     }
+
+    //     target.throttle = this->throttle_prev_ + delta;
+    //     this->throttle_prev_ = target.throttle;
+
+    //     target.throttle =
+    //         std::max(target.throttle, IDLE_THROTTLE);
+
+    //     throttle_rate_cmd = delta / cmd_dt;
+    // }
+
+float throttle_rate_cmd = 0.0f;
+
+if (this->drone_mode_ == DroneMode::ANGLE_SELF_LEVEL)
+{
+    /*
+     * SELF-LEVEL
+     *
+     * RC throttle:
+     * 0.0 -> -1.0
+     * 0.5 ->  0.0
+     * 1.0 -> +1.0
+     *
+     * 중앙 0.5는 현재 throttle 유지.
+     */
+    float throttle_input =
+        (target.throttle - 0.5f);
+
+    if (std::fabs(throttle_input) < SELF_LEVEL_THROTTLE_DEADBAND)
     {
-        target.throttle = 0.0f;
-        this->throttle_prev_ = 0.0f;
+        throttle_input = 0.0f;
+    }
+
+    /*
+     * 누적형 throttle
+     */
+    this->self_level_throttle_ +=
+        throttle_input *
+        SELF_LEVEL_THROTTLE_RATE *
+        cmd_dt;
+
+    this->self_level_throttle_ =
+        std::clamp(
+            this->self_level_throttle_,
+            0.0f,
+            1.0f);
+
+    target.throttle =
+        this->self_level_throttle_;
+
+    /*
+     * Armed 상태에서는 최소 idle 보장
+     */
+    target.throttle =
+        std::max(target.throttle, IDLE_THROTTLE);
+
+    /*
+     * 실제 throttle 변화율
+     */
+    throttle_rate_cmd =
+        throttle_input * SELF_LEVEL_THROTTLE_RATE;
     }
     else
     {
-        float ramp_up_rate = THROTTLE_RAMP_UP_RATE;
-        if (!this->is_airborne_)
+        /*
+        * ACRO
+        *
+        * 기존 absolute throttle + ramp
+        */
+        const bool throttle_cut =
+            target.throttle <= CUT_OFF_THROTTLE;
+
+        if (throttle_cut)
         {
-            ramp_up_rate = TAKEOFF_THROTTLE_RAMP_UP_RATE;
-        }
-
-        const float max_up = ramp_up_rate * cmd_dt;
-        const float max_down = THROTTLE_RAMP_DOWN_RATE * cmd_dt;
-
-        float delta = target.throttle - this->throttle_prev_;
-
-        if (delta > 0.0f)
-        {
-            delta = std::min(delta, max_up);
+            target.throttle = 0.0f;
+            this->throttle_prev_ = 0.0f;
         }
         else
         {
-            delta = std::max(delta, -max_down);
+            float ramp_up_rate = THROTTLE_RAMP_UP_RATE;
+
+            if (!this->is_airborne_)
+            {
+                ramp_up_rate =
+                    TAKEOFF_THROTTLE_RAMP_UP_RATE;
+            }
+
+            const float max_up =
+                ramp_up_rate * cmd_dt;
+
+            const float max_down =
+                THROTTLE_RAMP_DOWN_RATE * cmd_dt;
+
+            float delta =
+                target.throttle - this->throttle_prev_;
+
+            if (delta > 0.0f)
+            {
+                delta =
+                    std::min(delta, max_up);
+            }
+            else
+            {
+                delta =
+                    std::max(delta, -max_down);
+            }
+
+            target.throttle =
+                this->throttle_prev_ + delta;
+
+            this->throttle_prev_ =
+                target.throttle;
+
+            target.throttle =
+                std::max(
+                    target.throttle,
+                    IDLE_THROTTLE);
+
+            throttle_rate_cmd =
+                delta / cmd_dt;
         }
-
-        target.throttle = this->throttle_prev_ + delta;
-        this->throttle_prev_ = target.throttle;
-
-        target.throttle =
-            std::max(target.throttle, IDLE_THROTTLE);
-
-        throttle_rate_cmd = delta / cmd_dt;
     }
+
 
     ctx.target = target;
     ctx.target_valid = true;
@@ -838,17 +951,22 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     ctx.pid_out.yaw = std::clamp(ctx.pid_out.yaw, -0.5f, 0.5f);
 
     /*
-     * 6. Thrust curve
-     */
+    * 6. Thrust curve
+    */
     const float t = std::clamp(ctx.pid_out.throttle, 0.0f, 1.0f);
     const float expo = std::clamp(THRUST_EXPO, 0.0f, 1.0f);
 
-    float thrust_cmd = t * t * (1.0f - expo) + t * expo;
-    thrust_cmd = std::clamp(thrust_cmd, 0.0f, 1.0f);
+    float thrust_cmd =
+        t * t * (1.0f - expo) +
+        t * expo;
+
+    thrust_cmd =
+        std::clamp(thrust_cmd, 0.0f, 1.0f);
 
     if (this->state_ == DroneState::ARMED)
     {
-        thrust_cmd = std::max(thrust_cmd, IDLE_THROTTLE);
+        thrust_cmd =
+            std::max(thrust_cmd, IDLE_THROTTLE);
     }
 
     /*
