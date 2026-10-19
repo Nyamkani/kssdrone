@@ -101,13 +101,13 @@ flowchart TD
 **외부 촬영**
 
 <p align="center">
-  <img src="./docs/assets/first_flight_external.gif" alt="Outdoor flight test - external camera" width="900">
+  <img src="./docs/assets/first_flight_external.gif" alt="Outdoor flight test - external camera" width="450">
 </p>
 
 **FPV 카메라**
 
 <p align="center">
-  <img src="./docs/assets/first_flight_fpv.gif" alt="Outdoor flight test - FPV camera" width="900">
+  <img src="./docs/assets/first_flight_fpv.gif" alt="Outdoor flight test - FPV camera" width="360">
 </p>
 
 ## CRSF 구현 범위
@@ -363,13 +363,13 @@ A transient yaw disturbance was reproducible during rapid descent. No sustained 
 **External camera**
 
 <p align="center">
-  <img src="./docs/assets/first_flight_external.gif" alt="Outdoor flight test - external camera" width="900">
+  <img src="./docs/assets/first_flight_external.gif" alt="Outdoor flight test - external camera" width="450">
 </p>
 
-**FPV camera**
+**FPV 카메라**
 
 <p align="center">
-  <img src="./docs/assets/first_flight_fpv.gif" alt="Outdoor flight test - FPV camera" width="900">
+  <img src="./docs/assets/first_flight_fpv.gif" alt="Outdoor flight test - FPV camera" width="360">
 </p>
 
 ## CRSF Scope
