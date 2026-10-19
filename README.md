@@ -59,13 +59,13 @@ Rev 1.3-b에서는 Rev 1.2의 multi-rate 비행 제어 구조를 유지하면서
 **외부 촬영**
 
 <p align="center">
-  <img src="./docs/assets/first_flight_external.gif" alt="Outdoor flight test - external camera">
+  <img src="./docs/assets/first_flight_external.gif" alt="Outdoor flight test - external camera" width="450">
 </p>
 
 **FPV 카메라**
 
 <p align="center">
-  <img src="./docs/assets/first_flight_fpv.gif" alt="Outdoor flight test - FPV camera">
+  <img src="./docs/assets/first_flight_fpv.gif" alt="Outdoor flight test - FPV camera" width="360">
 </p>
 
 ## CRSF 구현 범위
@@ -279,13 +279,13 @@ A transient yaw disturbance was reproducible during rapid descent. No sustained 
 **External camera**
 
 <p align="center">
-  <img src="./docs/assets/first_flight_external.gif" alt="Outdoor flight test - external camera">
+  <img src="./docs/assets/first_flight_external.gif" alt="Outdoor flight test - external camera" width="450">
 </p>
 
 **FPV camera**
 
 <p align="center">
-  <img src="./docs/assets/first_flight_fpv.gif" alt="Outdoor flight test - FPV camera">
+  <img src="./docs/assets/first_flight_fpv.gif" alt="Outdoor flight test - FPV camera" width="360">
 </p>
 
 ## CRSF Scope
