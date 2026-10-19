@@ -36,6 +36,48 @@ Rev 1.3-b에서는 Rev 1.2의 multi-rate 비행 제어 구조를 유지하면서
 | Flight modes | RATE/ACRO, ANGLE/SELF-LEVEL |
 | Language | C / C++ |
 
+## 프로그램 구조
+
+Rev 1.3-b는 **CRSF 수신 Task**, **IMU 취득 Task**, **비행 제어 Main Task**를 분리한 FreeRTOS 구조입니다. 통신·센서 데이터를 공유하고, 메인 FSM에서 안전 상태와 멀티레이트 제어 파이프라인을 관리합니다.
+
+### 비행 제어 구조도
+
+<p align="center">
+  <img src="./docs/assets/flight_control_structure.webp"
+       alt="ESP32-S3 DIY Drone Flight Control Structure"
+       width="1100">
+</p>
+
+### Mermaid 프로그램 구성도
+
+```mermaid
+flowchart TD
+    ELRS["ELRS Receiver / CRSF"] --> UART["UART Events"]
+    UART --> RX["KssCrsfReceiver Task"]
+    RX --> PARSE["Frame Validation / RC Channels / Switch Commands"]
+    PARSE --> CMD["SharedSnapshot - ControlPacket"]
+    IMU["ICM-42688-P / SPI + INT"] --> IMUTASK["IMUInterface Task"]
+    IMUTASK --> IMUSNAP["Shared IMU Frame"]
+    subgraph FC["KSSDrone Main Task / Multi-Rate FSM"]
+        MAIN["Fast Background / Command Cache"] --> FSM["INIT / IMU CAL / DISARMED / ARMING / ARMED / LANDING / ERR"]
+        FSM -->|ARMED| EST["IMU Filtering / Quaternion EKF"]
+        EST --> CTRL["Rate / Angle Target + PID"]
+        CTRL --> COMP["Authority / Thrust / Voltage Compensation"]
+        COMP --> MIX["Motor Mixer / Output"]
+        MAIN --> BAT["Battery Monitoring / Safety / Failsafe"]
+    end
+    CMD --> MAIN
+    IMUSNAP --> EST
+    MIX --> DSHOT["RMT DSHOT - 1 kHz"] --> ESC["ESC / Four Motors"]
+    BAT --> TEL["Battery + Flight Mode Telemetry"]
+    TEL --> RX
+```
+
+- **입력 및 공유:** CRSF 채널·명령을 수신하여 SharedSnapshot에 저장하며, IMU 데이터는 별도 센서 Task에서 취득합니다.
+- **FSM 및 안전:** 비행 제어 Main Task가 명령·통신 timeout·failsafe·landing·emergency stop을 처리합니다.
+- **자세 제어:** quaternion 기반 자세 추정, Rate/Angle 제어, PID, 추력 보정 및 4모터 믹싱을 실행합니다.
+- **출력 및 Telemetry:** RMT 기반 DSHOT으로 ESC를 제어하고 배터리·비행 모드 정보를 CRSF로 송신합니다.
+
 ## 하드웨어 및 비행 테스트 미디어
 
 ### 완성 기체와 조종기
@@ -255,6 +297,48 @@ Rev 1.3-b retains the multi-rate control architecture introduced in Rev 1.2 whil
 | Motor protocol | RMT-based DSHOT |
 | Flight modes | RATE/ACRO and ANGLE/SELF-LEVEL |
 | Languages | C / C++ |
+
+## Program Structure
+
+Rev 1.3-b separates the **CRSF receiver task**, **IMU acquisition task**, and **main flight-control task** under FreeRTOS. Communication and sensor data feed the main FSM, which manages safety conditions and the multi-rate flight-control pipeline.
+
+### Flight-Control Architecture
+
+<p align="center">
+  <img src="./docs/assets/flight_control_structure.webp"
+       alt="ESP32-S3 DIY Drone Flight Control Structure"
+       width="1100">
+</p>
+
+### Mermaid Software Architecture
+
+```mermaid
+flowchart TD
+    ELRS["ELRS Receiver / CRSF"] --> UART["UART Events"]
+    UART --> RX["KssCrsfReceiver Task"]
+    RX --> PARSE["Frame Validation / RC Channels / Switch Commands"]
+    PARSE --> CMD["SharedSnapshot - ControlPacket"]
+    IMU["ICM-42688-P / SPI + INT"] --> IMUTASK["IMUInterface Task"]
+    IMUTASK --> IMUSNAP["Shared IMU Frame"]
+    subgraph FC["KSSDrone Main Task / Multi-Rate FSM"]
+        MAIN["Fast Background / Command Cache"] --> FSM["INIT / IMU CAL / DISARMED / ARMING / ARMED / LANDING / ERR"]
+        FSM -->|ARMED| EST["IMU Filtering / Quaternion EKF"]
+        EST --> CTRL["Rate / Angle Target + PID"]
+        CTRL --> COMP["Authority / Thrust / Voltage Compensation"]
+        COMP --> MIX["Motor Mixer / Output"]
+        MAIN --> BAT["Battery Monitoring / Safety / Failsafe"]
+    end
+    CMD --> MAIN
+    IMUSNAP --> EST
+    MIX --> DSHOT["RMT DSHOT - 1 kHz"] --> ESC["ESC / Four Motors"]
+    BAT --> TEL["Battery + Flight Mode Telemetry"]
+    TEL --> RX
+```
+
+- **Input and data sharing:** The CRSF task receives RC channels and commands through SharedSnapshot while a separate IMU task acquires sensor data.
+- **FSM and safety:** The main flight-control task handles commands, communication timeout, failsafe, landing, and emergency stop.
+- **Attitude control:** Quaternion-based estimation, Rate/Angle control, PID, thrust compensation, and four-motor mixing form the flight-control pipeline.
+- **Output and telemetry:** RMT-based DSHOT drives the ESCs; battery and flight-mode telemetry is sent over CRSF.
 
 ## Hardware and Flight-Test Media
 
