@@ -366,7 +366,7 @@ A transient yaw disturbance was reproducible during rapid descent. No sustained 
   <img src="./docs/assets/first_flight_external.gif" alt="Outdoor flight test - external camera" width="450">
 </p>
 
-**FPV camera**
+**FPV 카메라**
 
 <p align="center">
   <img src="./docs/assets/first_flight_fpv.gif" alt="Outdoor flight test - FPV camera" width="360">
