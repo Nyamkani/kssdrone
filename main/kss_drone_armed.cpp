@@ -1098,8 +1098,14 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     const int64_t start_us = esp_timer_get_time();
 #endif
 
+#if ENABLE_ARMED_TIMING_PROFILE
+    const uint32_t prof_rmt = this->armed_prof_.Mark();
+#endif
     esp_err_t ret =
             this->motor_interface_.SetMotorOutput(d1, d2, d3, d4);
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(ArmedTimingStage::MOTOR_RMT, prof_rmt);
+#endif
 
 #if ENABLE_RMT_OUTPUT_PROFILE
     const int64_t elapsed_us = esp_timer_get_time() - start_us;
@@ -1145,6 +1151,9 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
 
     if (this->armed_log_dt_accum_ >= 0.004f)
     {
+#if ENABLE_ARMED_TIMING_PROFILE
+        const uint32_t prof_motor_log = this->armed_prof_.Mark();
+#endif
         this->armed_log_dt_accum_ = 0.0f;
 
 
@@ -1195,6 +1204,9 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
 
         this->log_.mode = static_cast<uint8_t>(this->drone_mode_);
         this->log_.state = static_cast<uint8_t>(this->state_);
+#if ENABLE_ARMED_TIMING_PROFILE
+        this->armed_prof_.Record(ArmedTimingStage::MOTOR_LOG, prof_motor_log);
+#endif
     }
 
     return ESP_OK;
