@@ -28,6 +28,7 @@
 #include "pins.h"
 
 #include <atomic>
+#include <cstddef>
 #include <cmath>
 #include <algorithm>
 
@@ -174,6 +175,7 @@ struct ArmedProfileStats
     uint32_t sample_slot = 0;
     bool sampling = false;
     float elapsed_s = 0.0f;
+    uint8_t report_line = 0; // spread UART logs over four loop iterations
 
     inline void BeginLoop(const bool armed)
     {
