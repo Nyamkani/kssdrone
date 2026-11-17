@@ -66,7 +66,8 @@ void KSSDrone::ResetArmedRuntime()
     this->armed_output_comp_dt_accum_ = ARMED_OUTPUT_COMP_PERIOD_SEC;
     this->armed_control_dt_accum_ = ARMED_CONTROL_PERIOD_SEC;
     this->armed_motor_output_dt_accum_ = ARMED_MOTOR_OUTPUT_PERIOD_SEC;
-
+    this->armed_tilt_safety_dt_accum_ = ARMED_TILT_SAFETY_PERIOD_SEC;
+    
     this->armed_last_cmd_us_ = 0;
     this->armed_log_dt_accum_ = 0.0f;
 
