@@ -362,7 +362,8 @@ void KSSDrone::TryPrintMainLoopStats()
 void KSSDrone::TryPrintArmedProfileStats()
 {
 #if ENABLE_ARMED_TIMING_PROFILE
-    if (this->armed_prof_.elapsed_s < ARMED_TIMING_REPORT_SEC)
+    if (this->armed_prof_.report_line == 0 &&
+        this->armed_prof_.elapsed_s < ARMED_TIMING_REPORT_SEC)
     {
         return;
     }
@@ -385,7 +386,9 @@ void KSSDrone::TryPrintArmedProfileStats()
         return static_cast<unsigned long>(this->armed_prof_.Get(stage).count);
     };
 
-    ESP_LOGI(TAG,
+    if (this->armed_prof_.report_line == 0)
+    {
+        ESP_LOGI(TAG,
         "ARMED_TIMING CYCLE us(avg/max,n) work=%.1f/%.1f(%lu) fastbg=%.1f/%.1f(%lu) armed=%.1f/%.1f(%lu) ctx=%.1f/%.1f(%lu) slowbg=%.1f/%.1f(%lu)",
         avg_us(ArmedTimingStage::LOOP_WORK),
         max_us(ArmedTimingStage::LOOP_WORK),
@@ -402,8 +405,12 @@ void KSSDrone::TryPrintArmedProfileStats()
         avg_us(ArmedTimingStage::SLOW_BG),
         max_us(ArmedTimingStage::SLOW_BG),
         samples(ArmedTimingStage::SLOW_BG));
+    }
 
-    ESP_LOGI(TAG,
+
+    if (this->armed_prof_.report_line == 1)
+    {
+        ESP_LOGI(TAG,
         "ARMED_TIMING INPUT us(avg/max,n) fail=%.1f/%.1f(%lu) cmd_run=%.1f/%.1f(%lu) cmd_skip=%.1f/%.1f(%lu) imu=%.1f/%.1f(%lu) est_run=%.1f/%.1f(%lu) est_skip=%.1f/%.1f(%lu)",
         avg_us(ArmedTimingStage::FAILSAFE),
         max_us(ArmedTimingStage::FAILSAFE),
@@ -423,8 +430,12 @@ void KSSDrone::TryPrintArmedProfileStats()
         avg_us(ArmedTimingStage::EST_SKIP),
         max_us(ArmedTimingStage::EST_SKIP),
         samples(ArmedTimingStage::EST_SKIP));
+    }
 
-    ESP_LOGI(TAG,
+
+    if (this->armed_prof_.report_line == 2)
+    {
+        ESP_LOGI(TAG,
         "ARMED_TIMING AUX us(avg/max,n) air_run=%.1f/%.1f(%lu) air_skip=%.1f/%.1f(%lu) slow_run=%.1f/%.1f(%lu) slow_skip=%.1f/%.1f(%lu) tilt=%.1f/%.1f(%lu) pid=%.1f/%.1f(%lu)",
         avg_us(ArmedTimingStage::AIR_CALC),
         max_us(ArmedTimingStage::AIR_CALC),
@@ -444,8 +455,12 @@ void KSSDrone::TryPrintArmedProfileStats()
         avg_us(ArmedTimingStage::PID),
         max_us(ArmedTimingStage::PID),
         samples(ArmedTimingStage::PID));
+    }
 
-    ESP_LOGI(TAG,
+
+    if (this->armed_prof_.report_line == 3)
+    {
+        ESP_LOGI(TAG,
         "ARMED_TIMING OUTPUT us(avg/max,n) comp_run=%.1f/%.1f(%lu) comp_skip=%.1f/%.1f(%lu) motor=%.1f/%.1f(%lu) rmt=%.1f/%.1f(%lu) m_log=%.1f/%.1f(%lu)",
         avg_us(ArmedTimingStage::OUTC_CALC),
         max_us(ArmedTimingStage::OUTC_CALC),
@@ -462,8 +477,14 @@ void KSSDrone::TryPrintArmedProfileStats()
         avg_us(ArmedTimingStage::MOTOR_LOG),
         max_us(ArmedTimingStage::MOTOR_LOG),
         samples(ArmedTimingStage::MOTOR_LOG));
+    }
 
-    this->armed_prof_.ResetWindow();
+
+    if (++this->armed_prof_.report_line >= 4)
+    {
+        this->armed_prof_.report_line = 0;
+        this->armed_prof_.ResetWindow();
+    }
 #endif
 }
 
