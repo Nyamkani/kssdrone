@@ -117,6 +117,9 @@ Landing -> Disarmed
 #define ENABLE_RMT_OUTPUT_PROFILE  0  // 1: Enable, 0: Disable
 #define ENABLE_MOTOR_OUTPUT_COUNT 1
 #define PERIODIC_TIMER_USE_FMOD  0  // 1: 기존 fmod, 0: 반복 뺄셈
+#define ENABLE_ARMED_TIMING_PROFILE 1  // test branch only; 0: compile out
+#define ARMED_TIMING_SAMPLE_EVERY 17 // non-harmonic with 2/4/8/20 loop subrates
+#define ARMED_TIMING_REPORT_SEC 2.0f
 
 
 //time
@@ -125,21 +128,95 @@ Landing -> Disarmed
 
 #define COMMAND_TIMEOUT_US    200000LL
 
-//log
+// Sampled, read-only timing profiler. The core is pinned; 32-bit cycle subtraction
+// is wrap-safe for the short intervals measured here. No allocations or per-loop logs.
+#if ENABLE_ARMED_TIMING_PROFILE
+#include "esp_cpu.h"
+
+enum class ArmedTimingStage : uint8_t
+{
+    LOOP_WORK,
+    FAST_BG,
+    ARMED,
+    CONTEXT,
+    FAILSAFE,
+    CMD_CALC,
+    CMD_SKIP,
+    IMU,
+    EST_CALC,
+    EST_SKIP,
+    AIR_CALC,
+    AIR_SKIP,
+    SLOW_CALC,
+    SLOW_SKIP,
+    TILT,
+    PID,
+    OUTC_CALC,
+    OUTC_SKIP,
+    MOTOR,
+    MOTOR_RMT,
+    MOTOR_LOG,
+    SLOW_BG,
+    COUNT
+};
+
+struct ArmedProfilePoint
+{
+    uint64_t sum_cycles = 0;
+    uint32_t max_cycles = 0;
+    uint32_t count = 0;
+};
+
 struct ArmedProfileStats
 {
-    uint64_t count = 0;
+    static constexpr size_t STAGE_COUNT = static_cast<size_t>(ArmedTimingStage::COUNT);
+    ArmedProfilePoint stages[STAGE_COUNT]{};
+    uint32_t sample_slot = 0;
+    bool sampling = false;
+    float elapsed_s = 0.0f;
 
-    int64_t prepare_us = 0;
-    int64_t slow_comp_us = 0;
-    int64_t control_us = 0;
-    int64_t total_us = 0;
+    inline void BeginLoop(const bool armed)
+    {
+        sampling = false;
+        if (armed && ++sample_slot >= ARMED_TIMING_SAMPLE_EVERY)
+        {
+            sample_slot = 0;
+            sampling = true;
+        }
+    }
 
-    int64_t prepare_max_us = 0;
-    int64_t slow_comp_max_us = 0;
-    int64_t control_max_us = 0;
-    int64_t total_max_us = 0;
+    inline uint32_t Mark() const
+    {
+        return sampling ? static_cast<uint32_t>(esp_cpu_get_cycle_count()) : 0U;
+    }
+
+    inline void Record(const ArmedTimingStage stage, const uint32_t begin_cycles)
+    {
+        if (!sampling)
+        {
+            return;
+        }
+        const uint32_t cycles = static_cast<uint32_t>(esp_cpu_get_cycle_count()) - begin_cycles;
+        auto& p = stages[static_cast<size_t>(stage)];
+        p.sum_cycles += cycles;
+        if (cycles > p.max_cycles) p.max_cycles = cycles;
+        ++p.count;
+    }
+
+    inline const ArmedProfilePoint& Get(const ArmedTimingStage stage) const
+    {
+        return stages[static_cast<size_t>(stage)];
+    }
+
+    inline void ResetWindow()
+    {
+        for (auto& p : stages) p = {};
+        elapsed_s = 0.0f;
+        // Preserve sample_slot to keep the sample phases rotating.
+    }
 };
+#endif
+
 
 struct ArmedContext
 {
@@ -265,7 +342,9 @@ class KSSDrone
 
         //test
         float test_log_dt_ = 0.0f;
+#if ENABLE_ARMED_TIMING_PROFILE
         ArmedProfileStats armed_prof_{};
+#endif
 
         /*
         * Command / target cache
