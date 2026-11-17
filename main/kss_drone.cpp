@@ -361,29 +361,109 @@ void KSSDrone::TryPrintMainLoopStats()
 
 void KSSDrone::TryPrintArmedProfileStats()
 {
-#if ENABLE_DRONE_MAIN_STATS_LOG
-    constexpr uint64_t PRINT_COUNT = 1000;
-
-    if (this->armed_prof_.count < PRINT_COUNT)
+#if ENABLE_ARMED_TIMING_PROFILE
+    if (this->armed_prof_.elapsed_s < ARMED_TIMING_REPORT_SEC)
     {
         return;
     }
 
-    const uint64_t count = this->armed_prof_.count;
+    // Test platform: 240MHz fixed CPU frequency, CONFIG_PM_ENABLE=n.
+    // Values: average/max in microseconds (sample count).
+    const auto avg_us = [this](const ArmedTimingStage stage) -> double
+    {
+        const auto& p = this->armed_prof_.Get(stage);
+        return p.count ? static_cast<double>(p.sum_cycles) /
+            (static_cast<double>(p.count) * CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ) : 0.0;
+    };
+    const auto max_us = [this](const ArmedTimingStage stage) -> double
+    {
+        return static_cast<double>(this->armed_prof_.Get(stage).max_cycles) /
+            CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
+    };
+    const auto samples = [this](const ArmedTimingStage stage) -> unsigned long
+    {
+        return static_cast<unsigned long>(this->armed_prof_.Get(stage).count);
+    };
 
     ESP_LOGI(TAG,
-             "ARMED_PROF avg_us total=%lld prep=%lld slow=%lld ctrl=%lld "
-             "max_us total=%lld prep=%lld slow=%lld ctrl=%lld",
-             this->armed_prof_.total_us / count,
-             this->armed_prof_.prepare_us / count,
-             this->armed_prof_.slow_comp_us / count,
-             this->armed_prof_.control_us / count,
-             this->armed_prof_.total_max_us,
-             this->armed_prof_.prepare_max_us,
-             this->armed_prof_.slow_comp_max_us,
-             this->armed_prof_.control_max_us);
+        "ARMED_TIMING CYCLE us(avg/max,n) work=%.1f/%.1f(%lu) fastbg=%.1f/%.1f(%lu) armed=%.1f/%.1f(%lu) ctx=%.1f/%.1f(%lu) slowbg=%.1f/%.1f(%lu)",
+        avg_us(ArmedTimingStage::LOOP_WORK),
+        max_us(ArmedTimingStage::LOOP_WORK),
+        samples(ArmedTimingStage::LOOP_WORK),
+        avg_us(ArmedTimingStage::FAST_BG),
+        max_us(ArmedTimingStage::FAST_BG),
+        samples(ArmedTimingStage::FAST_BG),
+        avg_us(ArmedTimingStage::ARMED),
+        max_us(ArmedTimingStage::ARMED),
+        samples(ArmedTimingStage::ARMED),
+        avg_us(ArmedTimingStage::CONTEXT),
+        max_us(ArmedTimingStage::CONTEXT),
+        samples(ArmedTimingStage::CONTEXT),
+        avg_us(ArmedTimingStage::SLOW_BG),
+        max_us(ArmedTimingStage::SLOW_BG),
+        samples(ArmedTimingStage::SLOW_BG));
 
-    this->armed_prof_ = {};
+    ESP_LOGI(TAG,
+        "ARMED_TIMING INPUT us(avg/max,n) fail=%.1f/%.1f(%lu) cmd_run=%.1f/%.1f(%lu) cmd_skip=%.1f/%.1f(%lu) imu=%.1f/%.1f(%lu) est_run=%.1f/%.1f(%lu) est_skip=%.1f/%.1f(%lu)",
+        avg_us(ArmedTimingStage::FAILSAFE),
+        max_us(ArmedTimingStage::FAILSAFE),
+        samples(ArmedTimingStage::FAILSAFE),
+        avg_us(ArmedTimingStage::CMD_CALC),
+        max_us(ArmedTimingStage::CMD_CALC),
+        samples(ArmedTimingStage::CMD_CALC),
+        avg_us(ArmedTimingStage::CMD_SKIP),
+        max_us(ArmedTimingStage::CMD_SKIP),
+        samples(ArmedTimingStage::CMD_SKIP),
+        avg_us(ArmedTimingStage::IMU),
+        max_us(ArmedTimingStage::IMU),
+        samples(ArmedTimingStage::IMU),
+        avg_us(ArmedTimingStage::EST_CALC),
+        max_us(ArmedTimingStage::EST_CALC),
+        samples(ArmedTimingStage::EST_CALC),
+        avg_us(ArmedTimingStage::EST_SKIP),
+        max_us(ArmedTimingStage::EST_SKIP),
+        samples(ArmedTimingStage::EST_SKIP));
+
+    ESP_LOGI(TAG,
+        "ARMED_TIMING AUX us(avg/max,n) air_run=%.1f/%.1f(%lu) air_skip=%.1f/%.1f(%lu) slow_run=%.1f/%.1f(%lu) slow_skip=%.1f/%.1f(%lu) tilt=%.1f/%.1f(%lu) pid=%.1f/%.1f(%lu)",
+        avg_us(ArmedTimingStage::AIR_CALC),
+        max_us(ArmedTimingStage::AIR_CALC),
+        samples(ArmedTimingStage::AIR_CALC),
+        avg_us(ArmedTimingStage::AIR_SKIP),
+        max_us(ArmedTimingStage::AIR_SKIP),
+        samples(ArmedTimingStage::AIR_SKIP),
+        avg_us(ArmedTimingStage::SLOW_CALC),
+        max_us(ArmedTimingStage::SLOW_CALC),
+        samples(ArmedTimingStage::SLOW_CALC),
+        avg_us(ArmedTimingStage::SLOW_SKIP),
+        max_us(ArmedTimingStage::SLOW_SKIP),
+        samples(ArmedTimingStage::SLOW_SKIP),
+        avg_us(ArmedTimingStage::TILT),
+        max_us(ArmedTimingStage::TILT),
+        samples(ArmedTimingStage::TILT),
+        avg_us(ArmedTimingStage::PID),
+        max_us(ArmedTimingStage::PID),
+        samples(ArmedTimingStage::PID));
+
+    ESP_LOGI(TAG,
+        "ARMED_TIMING OUTPUT us(avg/max,n) comp_run=%.1f/%.1f(%lu) comp_skip=%.1f/%.1f(%lu) motor=%.1f/%.1f(%lu) rmt=%.1f/%.1f(%lu) m_log=%.1f/%.1f(%lu)",
+        avg_us(ArmedTimingStage::OUTC_CALC),
+        max_us(ArmedTimingStage::OUTC_CALC),
+        samples(ArmedTimingStage::OUTC_CALC),
+        avg_us(ArmedTimingStage::OUTC_SKIP),
+        max_us(ArmedTimingStage::OUTC_SKIP),
+        samples(ArmedTimingStage::OUTC_SKIP),
+        avg_us(ArmedTimingStage::MOTOR),
+        max_us(ArmedTimingStage::MOTOR),
+        samples(ArmedTimingStage::MOTOR),
+        avg_us(ArmedTimingStage::MOTOR_RMT),
+        max_us(ArmedTimingStage::MOTOR_RMT),
+        samples(ArmedTimingStage::MOTOR_RMT),
+        avg_us(ArmedTimingStage::MOTOR_LOG),
+        max_us(ArmedTimingStage::MOTOR_LOG),
+        samples(ArmedTimingStage::MOTOR_LOG));
+
+    this->armed_prof_.ResetWindow();
 #endif
 }
 
