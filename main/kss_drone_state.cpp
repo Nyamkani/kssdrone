@@ -157,7 +157,13 @@ esp_err_t KSSDrone::Armed(const float dt)
     esp_err_t ret = ESP_OK;
 
     ArmedContext ctx{};
+#if ENABLE_ARMED_TIMING_PROFILE
+    const uint32_t prof_ctx = this->armed_prof_.Mark();
+#endif
     this->LoadArmedContextCache(ctx);
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(ArmedTimingStage::CONTEXT, prof_ctx);
+#endif
 
     float failsafe_dt = 0.0f;
     if (ConsumePeriodicDt(this->armed_failsafe_dt_accum_,
@@ -165,38 +171,82 @@ esp_err_t KSSDrone::Armed(const float dt)
                         ARMED_FAILSAFE_PERIOD_SEC,
                         failsafe_dt))
     {
+#if ENABLE_ARMED_TIMING_PROFILE
+        const uint32_t prof_failsafe = this->armed_prof_.Mark();
+#endif
         ret = this->ArmedFailsafeFast(failsafe_dt);
+#if ENABLE_ARMED_TIMING_PROFILE
+        this->armed_prof_.Record(ArmedTimingStage::FAILSAFE, prof_failsafe);
+#endif
         if (ret != ESP_OK || this->state_ != DroneState::ARMED)
         {
             return ret;
         }
     }
 
+#if ENABLE_ARMED_TIMING_PROFILE
+    const bool prof_due_cmd = this->armed_prof_.sampling && (ctx.cmd_valid) &&
+        (this->armed_command_dt_accum_.phase_s + dt >= ARMED_COMMAND_PERIOD_SEC);
+    const uint32_t prof_cmd = this->armed_prof_.Mark();
+#endif
     ret = this->ArmedCommandMedium(dt, ctx);
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(prof_due_cmd ? ArmedTimingStage::CMD_CALC : ArmedTimingStage::CMD_SKIP, prof_cmd);
+#endif
     if (ret != ESP_OK || this->state_ != DroneState::ARMED)
     {
         return ret;
     }
 
+#if ENABLE_ARMED_TIMING_PROFILE
+    const uint32_t prof_imu = this->armed_prof_.Mark();
+#endif
     ret = this->ArmedImuFast(dt, ctx);
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(ArmedTimingStage::IMU, prof_imu);
+#endif
     if (ret != ESP_OK || this->state_ != DroneState::ARMED)
     {
         return ret;
     }
 
+#if ENABLE_ARMED_TIMING_PROFILE
+    const bool prof_due_est = this->armed_prof_.sampling && (ctx.imu_valid && ctx.target_valid) &&
+        (this->armed_estimator_dt_accum_.phase_s + dt >= ARMED_ESTIMATOR_PERIOD_SEC);
+    const uint32_t prof_est = this->armed_prof_.Mark();
+#endif
     ret = this->ArmedEstimatorMedium(dt, ctx);
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(prof_due_est ? ArmedTimingStage::EST_CALC : ArmedTimingStage::EST_SKIP, prof_est);
+#endif
     if (ret != ESP_OK || this->state_ != DroneState::ARMED)
     {
         return ret;
     }
 
+#if ENABLE_ARMED_TIMING_PROFILE
+    const bool prof_due_air = this->armed_prof_.sampling && (ctx.target_valid) &&
+        (this->armed_airborne_dt_accum_.phase_s + dt >= ARMED_AIRBORNE_PERIOD_SEC);
+    const uint32_t prof_air = this->armed_prof_.Mark();
+#endif
     this->ArmedAirborneSlow(dt, ctx);
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(prof_due_air ? ArmedTimingStage::AIR_CALC : ArmedTimingStage::AIR_SKIP, prof_air);
+#endif
     if (this->state_ != DroneState::ARMED)
     {
         return ESP_OK;
     }
 
+#if ENABLE_ARMED_TIMING_PROFILE
+    const bool prof_due_slow = this->armed_prof_.sampling && (ctx.cmd_valid && ctx.imu_valid && ctx.ekf_valid && ctx.state_valid && ctx.target_valid) &&
+        (this->armed_slow_comp_dt_accum_.phase_s + dt >= ARMED_SOFT_COMP_PERIOD_SEC);
+    const uint32_t prof_slow = this->armed_prof_.Mark();
+#endif
     this->ArmedSlowCompUpdate(dt, ctx);
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(prof_due_slow ? ArmedTimingStage::SLOW_CALC : ArmedTimingStage::SLOW_SKIP, prof_slow);
+#endif
     if (this->state_ != DroneState::ARMED)
     {
         return ESP_OK;
@@ -208,7 +258,13 @@ esp_err_t KSSDrone::Armed(const float dt)
                         ARMED_TILT_SAFETY_PERIOD_SEC,
                         tilt_dt))
     {
+#if ENABLE_ARMED_TIMING_PROFILE
+        const uint32_t prof_tilt = this->armed_prof_.Mark();
+#endif
         this->ArmedTiltSafetyMedium(tilt_dt, ctx);
+#if ENABLE_ARMED_TIMING_PROFILE
+        this->armed_prof_.Record(ArmedTimingStage::TILT, prof_tilt);
+#endif
         if (this->state_ != DroneState::ARMED)
         {
             return ESP_OK;
@@ -224,7 +280,13 @@ esp_err_t KSSDrone::Armed(const float dt)
                           ARMED_CONTROL_PERIOD_SEC,
                           control_dt))
     {
+#if ENABLE_ARMED_TIMING_PROFILE
+        const uint32_t prof_pid = this->armed_prof_.Mark();
+#endif
         ret = this->ArmedControlFast(control_dt, ctx);
+#if ENABLE_ARMED_TIMING_PROFILE
+        this->armed_prof_.Record(ArmedTimingStage::PID, prof_pid);
+#endif
         if (ret != ESP_OK || this->state_ != DroneState::ARMED)
         {
             return ret;
@@ -235,7 +297,15 @@ esp_err_t KSSDrone::Armed(const float dt)
      * output compensation은 PID 이후에 실행.
      * ctx.pid_out 또는 armed_pid_out_cache_를 기준으로 계산할 수 있음.
      */
+#if ENABLE_ARMED_TIMING_PROFILE
+    const bool prof_due_outc = this->armed_prof_.sampling && (ctx.target_valid) &&
+        (this->armed_output_comp_dt_accum_.phase_s + dt >= ARMED_OUTPUT_COMP_PERIOD_SEC);
+    const uint32_t prof_outc = this->armed_prof_.Mark();
+#endif
     this->ArmedOutputCompMedium(dt, ctx);
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(prof_due_outc ? ArmedTimingStage::OUTC_CALC : ArmedTimingStage::OUTC_SKIP, prof_outc);
+#endif
     if (this->state_ != DroneState::ARMED)
     {
         return ESP_OK;
@@ -254,7 +324,13 @@ esp_err_t KSSDrone::Armed(const float dt)
         {
             ctx.pid_out = this->armed_pid_out_cache_;
 
+#if ENABLE_ARMED_TIMING_PROFILE
+            const uint32_t prof_motor = this->armed_prof_.Mark();
+#endif
             ret = this->ArmedOutputFast(motor_dt, ctx);
+#if ENABLE_ARMED_TIMING_PROFILE
+            this->armed_prof_.Record(ArmedTimingStage::MOTOR, prof_motor);
+#endif
             if (ret != ESP_OK)
             {
                 return ret;
