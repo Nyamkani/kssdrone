@@ -121,14 +121,14 @@ esp_err_t KSSDrone::ArmedFailsafeFast(const float dt)
         return ESP_OK;
     }
 
-    if (this->battery_monitor_.GetState() == BatteryState::CRITICAL)
-    {
-        this->debug_disarm_reason_ = DisarmReason::BATTERY_CRITICAL;
-        this->landing_mode_ = LandingMode::FAILSAFE;
-        this->ChangeState(DroneState::LANDING);
-        ESP_LOGE(TAG, "CRITICAL battery! -> LANDING(FAILSAFE)");
-        return ESP_OK;
-    }
+    // if (this->battery_monitor_.GetState() == BatteryState::CRITICAL)
+    // {
+    //     this->debug_disarm_reason_ = DisarmReason::BATTERY_CRITICAL;
+    //     this->landing_mode_ = LandingMode::FAILSAFE;
+    //     this->ChangeState(DroneState::LANDING);
+    //     ESP_LOGE(TAG, "CRITICAL battery! -> LANDING(FAILSAFE)");
+    //     return ESP_OK;
+    // }
 
     if (!this->armed_)
     {
@@ -1092,14 +1092,52 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     d3 = std::max<uint16_t>(d3, IDLE_DSHOT_THRESHOLD);
     d4 = std::max<uint16_t>(d4, IDLE_DSHOT_THRESHOLD);
 
+
+#if ENABLE_RMT_OUTPUT_PROFILE
+    const int64_t start_us = esp_timer_get_time();
+#endif
+
     esp_err_t ret =
-        this->motor_interface_.SetMotorOutput(d1, d2, d3, d4);
+            this->motor_interface_.SetMotorOutput(d1, d2, d3, d4);
+
+#if ENABLE_RMT_OUTPUT_PROFILE
+    const int64_t elapsed_us = esp_timer_get_time() - start_us;
+
+    static uint64_t rmt_sum_us = 0;
+    static int64_t rmt_min_us = INT64_MAX;
+    static int64_t rmt_max_us = 0;
+    static uint32_t rmt_count = 0;
+
+    rmt_sum_us += elapsed_us;
+    rmt_min_us = std::min(rmt_min_us, elapsed_us);
+    rmt_max_us = std::max(rmt_max_us, elapsed_us);
+    rmt_count++;
+
+    if (rmt_count >= 10000)
+    {
+        ESP_LOGI(TAG,
+            "RMT Output: avg=%lldus min=%lldus max=%lldus",
+            static_cast<long long>(rmt_sum_us / rmt_count),
+            static_cast<long long>(rmt_min_us),
+            static_cast<long long>(rmt_max_us));
+
+        rmt_sum_us = 0;
+        rmt_min_us = INT64_MAX;
+        rmt_max_us = 0;
+        rmt_count = 0;
+    }
+#endif
 
     if (ret != ESP_OK)
     {
         ESP_LOGW(TAG, "RMT - Motor Control failed.");
         return ret;
     }
+
+// 여기에 모터 출력 카운터 추가
+#if ENABLE_MOTOR_OUTPUT_COUNT
+    motor_output_count_++;
+#endif
 
 
     this->armed_log_dt_accum_ += dt;

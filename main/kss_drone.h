@@ -112,8 +112,11 @@ Landing -> Disarmed
 #define DISARM_SETTLE_TIME     1.0f
 
 //task log
-#define ENABLE_DRONE_MAIN_STATS_LOG  0
+#define ENABLE_DRONE_MAIN_STATS_LOG  1
 #define ENABLE_CMD_DETAIL_LOG 0
+#define ENABLE_RMT_OUTPUT_PROFILE  0  // 1: Enable, 0: Disable
+#define ENABLE_MOTOR_OUTPUT_COUNT 1
+#define PERIODIC_TIMER_USE_FMOD  0  // 1: 기존 fmod, 0: 반복 뺄셈
 
 
 //time
@@ -206,6 +209,20 @@ struct ArmedOutputCache
     float rl_mul = 1.0f;
 };
 
+struct PeriodicTimer
+{
+    float phase_s = 0.0f;     // 주기 판단용 누적 시간
+    float elapsed_s = 0.0f;   // 실제 경과 시간
+
+    // 기존 ResetArmedRuntime() 초기화 코드와 호환
+    PeriodicTimer& operator=(const float initial_phase)
+    {
+        phase_s = initial_phase;
+        elapsed_s = 0.0f;
+        return *this;
+    }
+};
+
 class KSSDrone
 {
     public:
@@ -278,35 +295,28 @@ class KSSDrone
         AttitudeState armed_state_cache_{};
         bool armed_state_valid_ = false;
 
-        /*
-        * Subrate accumulators
-        */
-        float armed_command_dt_accum_ = 0.0f;
-        float armed_estimator_dt_accum_ = 0.0f;
-        float armed_airborne_dt_accum_ = 0.0f;
-        float armed_slow_comp_dt_accum_ = 0.0f;
+        // Subrate accumulators
+        PeriodicTimer armed_command_dt_accum_{};
+        PeriodicTimer armed_estimator_dt_accum_{};
+        PeriodicTimer armed_airborne_dt_accum_{};
+        PeriodicTimer armed_slow_comp_dt_accum_{};
 
-        /*
-        * output
-        */
+        // Output
         ArmedOutputCache armed_output_cache_{};
 
-        float armed_output_comp_dt_accum_ = 0.0f;
+        PeriodicTimer armed_output_comp_dt_accum_{};
         float armed_log_dt_accum_ = 0.0f;
 
-        float armed_control_dt_accum_ = 0.0f;
-        float armed_motor_output_dt_accum_ = 0.0f;
+        PeriodicTimer armed_control_dt_accum_{};
+        PeriodicTimer armed_motor_output_dt_accum_{};
 
-        /*
-        * failsafe
-        */
-        float armed_failsafe_dt_accum_ = 0.0f;
+        // Failsafe
+        PeriodicTimer armed_failsafe_dt_accum_{};
 
         bool armed_pid_valid_ = false;
         FlightPIDOutput armed_pid_out_cache_{};
 
-
-        float armed_tilt_safety_dt_accum_ = 0.0f;
+        PeriodicTimer armed_tilt_safety_dt_accum_{};
 
     private:
         static constexpr float GYRO_LIMIT = 20.0f; // rad/s 
@@ -458,6 +468,8 @@ class KSSDrone
         //imu
         static constexpr int64_t IMU_STALE_LIMIT_US = 2000;
 
+        uint32_t motor_output_count_ = 0;
+
     public:
         esp_err_t StartTask();
         void StopTaskRequest();
@@ -605,21 +617,40 @@ static inline void UpdateMaxI64(int64_t& max_value, const int64_t value)
     }
 }
 
+
+
 static inline bool ConsumePeriodicDt(
-    float& accum_dt,
+    PeriodicTimer& timer,
     const float dt,
     const float period_sec,
     float& out_dt)
 {
-    accum_dt += dt;
+    timer.phase_s += dt;
+    timer.elapsed_s += dt;
 
-    if (accum_dt < period_sec)
+    if (timer.phase_s < period_sec)
     {
         return false;
     }
 
-    out_dt = accum_dt;
-    accum_dt = 0.0f;
+    // 목표 주기 한 번 소비
+    timer.phase_s -= period_sec;
+
+    // 놓친 주기는 재실행하지 않고 잔여 위상만 보존
+    if (timer.phase_s >= period_sec)
+    {
+#if PERIODIC_TIMER_USE_FMOD
+        timer.phase_s = std::fmod(timer.phase_s, period_sec);
+#else
+        while (timer.phase_s >= period_sec)
+        {
+            timer.phase_s -= period_sec;
+        }
+#endif
+    }
+
+    out_dt = timer.elapsed_s;
+    timer.elapsed_s = 0.0f;
 
     return true;
 }

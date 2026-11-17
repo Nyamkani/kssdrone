@@ -13,8 +13,8 @@
   "clangd.path": "/home/kssvm/.espressif/tools/esp-clang/esp-20.1.1_20250829/esp-clang/bin/clangd",
   "clangd.arguments": [
     "--background-index",
-    "--query-driver=/home/kssvm/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc",
-    "--compile-commands-dir=${workspaceFolder}/build"
+    "--query-driver=**",
+    "--compile-commands-dir=/home/kssvm/workspace/esp/workspace/esp32s3-drone/kssdrone/build"
   ],
   "idf.flashType": "UART",
   "mcu-debug.rtos-views.showRTOS": true,

@@ -320,7 +320,7 @@ void KSSDrone::TryPrintMainLoopStats()
 
     ESP_LOGI(TAG,
         "KSS loop state=%d hz=%lu avg=%.3fms min=%.3fms max=%.3fms "
-        "over2=%lu over5=%lu over10=%lu wdt=%lu "
+        "over2=%lu over5=%lu over10=%lu wdt=%lu motor=%lu "
         "imu=%lu/%lu/%lu age=%.1f/%lld/%lldus "
         "seq_d=0:%lu 1:%lu 2:%lu 3p:%lu last=%lu/%lu",
 
@@ -334,6 +334,7 @@ void KSSDrone::TryPrintMainLoopStats()
         this->loop_stats_.over_5ms,
         this->loop_stats_.over_10ms,
         this->loop_stats_.wdt_guard,   // 반드시 여기
+        static_cast<unsigned long>(this->motor_output_count_),
 
         this->imu_frame_stats_.frame_count,
         this->imu_frame_stats_.invalid_count,
@@ -353,6 +354,7 @@ void KSSDrone::TryPrintMainLoopStats()
     );
     this->loop_stats_.Reset();
     this->imu_frame_stats_.ResetKeepLastSeq();
+    this->motor_output_count_ = 0;
 #endif
 }
 

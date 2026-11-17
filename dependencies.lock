@@ -17,4 +17,4 @@ direct_dependencies:
 - espressif/eigen
 manifest_hash: 05dd7a9d21bf66e3791f575232bdb8249ad680091428ea6e0b2619a7f6562259
 target: esp32s3
-version: 2.0.0
+version: 3.0.0
