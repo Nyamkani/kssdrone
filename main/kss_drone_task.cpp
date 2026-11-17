@@ -77,7 +77,15 @@ void KSSDrone::MainLoop()
             break;
         }
 
+#if ENABLE_ARMED_TIMING_PROFILE
+        this->armed_prof_.BeginLoop(this->state_ == DroneState::ARMED);
+        const uint32_t prof_work = this->armed_prof_.Mark();
+        const uint32_t prof_fast_bg = this->armed_prof_.Mark();
+#endif
         ret = this->FastBackgroundJobs(dt);
+#if ENABLE_ARMED_TIMING_PROFILE
+        this->armed_prof_.Record(ArmedTimingStage::FAST_BG, prof_fast_bg);
+#endif
         if (ret != ESP_OK)
         {
             this->ChangeState(DroneState::ERR);
@@ -118,7 +126,15 @@ void KSSDrone::MainLoop()
                 break;
 
             case DroneState::ARMED:
+#if ENABLE_ARMED_TIMING_PROFILE
+                {
+                    const uint32_t prof_armed = this->armed_prof_.Mark();
+#endif
                 ret = this->Armed(dt);
+#if ENABLE_ARMED_TIMING_PROFILE
+                    this->armed_prof_.Record(ArmedTimingStage::ARMED, prof_armed);
+                }
+#endif
                 if (ret != ESP_OK)
                 {
                     this->ChangeState(DroneState::ERR);
@@ -144,7 +160,13 @@ void KSSDrone::MainLoop()
         this->slow_bg_dt_accum_ += dt;
         if (this->slow_bg_dt_accum_ >= BACKGROUND_SLOW_JOB_TIME)
         {
+#if ENABLE_ARMED_TIMING_PROFILE
+            const uint32_t prof_slow_bg = this->armed_prof_.Mark();
+#endif
             ret = this->SlowBackgroundJobs(this->slow_bg_dt_accum_);
+#if ENABLE_ARMED_TIMING_PROFILE
+            this->armed_prof_.Record(ArmedTimingStage::SLOW_BG, prof_slow_bg);
+#endif
             this->slow_bg_dt_accum_ = 0.0f;
 
             if (ret != ESP_OK)
@@ -152,6 +174,14 @@ void KSSDrone::MainLoop()
                 this->ChangeState(DroneState::ERR);
             }
         }
+
+#if ENABLE_ARMED_TIMING_PROFILE
+        this->armed_prof_.Record(ArmedTimingStage::LOOP_WORK, prof_work);
+        if (this->state_ == DroneState::ARMED)
+        {
+            this->armed_prof_.elapsed_s += raw_dt;
+        }
+#endif
 
         /*
          * WDT / overrun guard
