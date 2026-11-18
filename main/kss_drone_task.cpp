@@ -72,6 +72,12 @@ void KSSDrone::MainLoop()
         this->TryPrintMainLoopStats();
         this->TryPrintArmedProfileStats();
 
+#if ENABLE_DISARM_TIMING_PROFILE
+        this->TryPrintDisarmTimingStats();
+        this->disarm_timing_.BeginLoop(this->state_ == DroneState::DISARMED);
+        const uint32_t disarm_body_begin = this->disarm_timing_.Mark();
+#endif
+
         if (this->task_stop_.load())
         {
             break;
@@ -82,7 +88,14 @@ void KSSDrone::MainLoop()
         const uint32_t prof_work = this->armed_prof_.Mark();
         const uint32_t prof_fast_bg = this->armed_prof_.Mark();
 #endif
+#if ENABLE_DISARM_TIMING_PROFILE
+        const uint32_t disarm_fast_bg_begin = this->disarm_timing_.Mark();
+#endif
         ret = this->FastBackgroundJobs(dt);
+#if ENABLE_DISARM_TIMING_PROFILE
+        this->disarm_timing_.Record(DisarmTimingStage::FAST_BG,
+                                   disarm_fast_bg_begin);
+#endif
 #if ENABLE_ARMED_TIMING_PROFILE
         this->armed_prof_.Record(ArmedTimingStage::FAST_BG, prof_fast_bg);
 #endif
@@ -110,12 +123,21 @@ void KSSDrone::MainLoop()
                 break;
 
             case DroneState::DISARMED:
+            {
+#if ENABLE_DISARM_TIMING_PROFILE
+                const uint32_t disarm_begin = this->disarm_timing_.Mark();
+#endif
                 ret = this->Disarmed(dt);
+#if ENABLE_DISARM_TIMING_PROFILE
+                this->disarm_timing_.Record(DisarmTimingStage::DISARMED,
+                                           disarm_begin);
+#endif
                 if (ret != ESP_OK)
                 {
                     this->ChangeState(DroneState::ERR);
                 }
                 break;
+            }
 
             case DroneState::ARMING:
                 ret = this->Arming(dt);
@@ -163,7 +185,14 @@ void KSSDrone::MainLoop()
 #if ENABLE_ARMED_TIMING_PROFILE
             const uint32_t prof_slow_bg = this->armed_prof_.Mark();
 #endif
+#if ENABLE_DISARM_TIMING_PROFILE
+            const uint32_t disarm_slow_bg_begin = this->disarm_timing_.Mark();
+#endif
             ret = this->SlowBackgroundJobs(this->slow_bg_dt_accum_);
+#if ENABLE_DISARM_TIMING_PROFILE
+            this->disarm_timing_.Record(DisarmTimingStage::SLOW_BG,
+                                       disarm_slow_bg_begin);
+#endif
 #if ENABLE_ARMED_TIMING_PROFILE
             this->armed_prof_.Record(ArmedTimingStage::SLOW_BG, prof_slow_bg);
 #endif
@@ -196,6 +225,14 @@ void KSSDrone::MainLoop()
          * 2kHz 이상:
          * - busy-wait 기반이므로 guard가 중요함.
          */
+#if ENABLE_DISARM_TIMING_PROFILE
+        if (this->disarm_timing_.sampling)
+        {
+            this->disarm_timing_.Record(DisarmTimingStage::BODY_WORK,
+                                       disarm_body_begin);
+            ++this->disarm_timing_.sampled_loops;
+        }
+#endif
         bool forced_idle_delay = false;
 
         if (this->state_ == DroneState::ARMED)
