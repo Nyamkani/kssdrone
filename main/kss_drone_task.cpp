@@ -188,7 +188,12 @@ void KSSDrone::MainLoop()
 #if ENABLE_DISARM_TIMING_PROFILE
             const uint32_t disarm_slow_bg_begin = this->disarm_timing_.Mark();
 #endif
-            ret = this->SlowBackgroundJobs(this->slow_bg_dt_accum_);
+#if MAIN_LOOP_RATE_HZ > 1000
+            ret = this->ProcessSlowBackground(this->slow_bg_dt_accum_,
+                                              next_loop_us);
+#else
+            ret = this->ProcessSlowBackground(this->slow_bg_dt_accum_, 0);
+#endif
 #if ENABLE_DISARM_TIMING_PROFILE
             this->disarm_timing_.Record(DisarmTimingStage::SLOW_BG,
                                        disarm_slow_bg_begin);
