@@ -5,7 +5,6 @@
 #define MAIN_LOOP_RATE_HZ 2000
 
 static_assert(
-    MAIN_LOOP_RATE_HZ == 1000 ||
     MAIN_LOOP_RATE_HZ == 2000 ||
     MAIN_LOOP_RATE_HZ == 4000,
     "Unsupported MAIN_LOOP_RATE_HZ"
@@ -47,8 +46,9 @@ static constexpr float MAIN_LOOP_FORCE_IDLE_INTERVAL_SEC =
 #define ARMED_SOFT_COMP_RATE_HZ      250
 #define ARMED_OUTPUT_COMP_RATE_HZ    100
 
+// The 4kHz profile is an experimental 4kHz scheduler tick; IMU/PID
+// remain 2kHz, not 4kHz, because the measured IMU+PID cost is ~234us.
 #define ARMED_CONTROL_RATE_HZ        2000
-
 #define ARMED_MOTOR_OUTPUT_RATE_HZ   1000
 /*
 2kHz:
@@ -119,6 +119,110 @@ static constexpr float ARMED_CONTROL_PERIOD_SEC =
 
 static constexpr float ARMED_MOTOR_OUTPUT_PERIOD_SEC =
     1.0f / static_cast<float>(ARMED_MOTOR_OUTPUT_RATE_HZ);
+
+// Fixed 20ms cyclic executive for ARMED, independent of per-job dt polling.
+// These are NOMINAL sampled averages from a profiling-enabled build, NOT WCET.
+// Safety/FSM state transitions are deliberately outside this scheduling table.
+// 2kHz: 40 slots x 500us. 4kHz: 80 slots x 250us (experimental).
+namespace KssArmedSchedule
+{
+enum class Job : uint8_t
+{
+    FAILSAFE, COMMAND, IMU, ESTIMATOR, AIRBORNE,
+    SLOW_COMP, TILT, PID, OUTPUT_COMP, MOTOR, COUNT
+};
+
+constexpr uint16_t Bit(const Job job)
+{
+    return static_cast<uint16_t>(1U << static_cast<uint8_t>(job));
+}
+
+static constexpr uint16_t kSlotCount = MAIN_LOOP_RATE_HZ / 50U;
+
+constexpr uint16_t Mask(const uint16_t slot)
+{
+    uint16_t m = 0U;
+#if MAIN_LOOP_RATE_HZ == 2000
+    // IMU and PID: each 500us slot; motor on even slots, EKF on phase 1.
+    m |= Bit(Job::IMU) | Bit(Job::PID);
+    if (slot % 2U == 0U) m |= Bit(Job::MOTOR);
+    if (slot % 4U == 1U) m |= Bit(Job::ESTIMATOR) | Bit(Job::TILT);
+    if (slot % 4U == 3U) m |= Bit(Job::FAILSAFE);
+    if (slot % 8U == 3U) m |= Bit(Job::SLOW_COMP);
+    if (slot % 8U == 7U) m |= Bit(Job::AIRBORNE);
+    if (slot % 20U == 7U) m |= Bit(Job::OUTPUT_COMP);
+    // Four command executions / 20ms: 4ms/6ms intervals, rather than
+    // forcing a 5ms command onto a motor or EKF-heavy slot.
+    if (slot == 3U || slot == 15U || slot == 23U || slot == 35U)
+        m |= Bit(Job::COMMAND);
+#elif MAIN_LOOP_RATE_HZ == 4000
+    // EXPERIMENT: 4kHz tick; IMU/PID 2kHz, motor 1kHz, EKF 500Hz.
+    // The sampled ~259us IMU+PID+loop overhead already exceeds 250us.
+    if (slot % 2U == 0U) m |= Bit(Job::IMU) | Bit(Job::PID);
+    if (slot % 8U == 1U || slot % 8U == 5U) m |= Bit(Job::MOTOR);
+    if (slot % 8U == 3U) m |= Bit(Job::ESTIMATOR);
+    if (slot % 8U == 7U) m |= Bit(Job::FAILSAFE) | Bit(Job::TILT);
+    if (slot % 16U == 7U) m |= Bit(Job::SLOW_COMP);
+    if (slot % 16U == 15U) m |= Bit(Job::AIRBORNE);
+    if (slot % 40U == 15U) m |= Bit(Job::OUTPUT_COMP);
+    if (slot == 7U || slot == 23U || slot == 47U || slot == 63U)
+        m |= Bit(Job::COMMAND);
+#endif
+    return m;
+}
+
+constexpr uint16_t Count(const Job job)
+{
+    uint16_t n = 0U;
+    for (uint16_t slot = 0U; slot < kSlotCount; ++slot)
+        if ((Mask(slot) & Bit(job)) != 0U) ++n;
+    return n;
+}
+
+// Predictive capacity estimate, not guaranteed on hardware.
+constexpr uint16_t EstimateUs(const uint16_t mask)
+{
+    uint16_t us = 25U;  // ~18us fast-bg + ~7us context (profiled)
+    if (mask & Bit(Job::IMU))         us += 138U;
+    if (mask & Bit(Job::PID))         us += 96U;
+    if (mask & Bit(Job::MOTOR))       us += 182U;
+    if (mask & Bit(Job::ESTIMATOR))   us += 215U;
+    if (mask & Bit(Job::COMMAND))     us += 80U;
+    if (mask & Bit(Job::FAILSAFE))    us += 10U;
+    if (mask & Bit(Job::AIRBORNE))    us += 14U;
+    if (mask & Bit(Job::SLOW_COMP))   us += 111U;
+    if (mask & Bit(Job::TILT))        us += 10U;
+    if (mask & Bit(Job::OUTPUT_COMP)) us += 45U;
+    return us;
+}
+constexpr uint16_t EstimatedPeakUs()
+{
+    uint16_t peak = 0U;
+    for (uint16_t slot = 0U; slot < kSlotCount; ++slot)
+    {
+        const uint16_t cost = EstimateUs(Mask(slot));
+        if (cost > peak) peak = cost;
+    }
+    return peak;
+}
+static_assert(ARMED_CONTROL_RATE_HZ == 2000 &&
+              ARMED_MOTOR_OUTPUT_RATE_HZ == 1000 &&
+              ARMED_ESTIMATOR_RATE_HZ == 500 &&
+              ARMED_COMMAND_RATE_HZ == 200 &&
+              ARMED_SOFT_COMP_RATE_HZ == 250 &&
+              ARMED_OUTPUT_COMP_RATE_HZ == 100,
+              "Fixed schedule phases must be updated with subrate constants");
+static_assert(Count(Job::IMU) == 40U && Count(Job::PID) == 40U &&
+              Count(Job::MOTOR) == 20U && Count(Job::ESTIMATOR) == 10U &&
+              Count(Job::COMMAND) == 4U && Count(Job::FAILSAFE) == 10U &&
+              Count(Job::AIRBORNE) == 5U && Count(Job::SLOW_COMP) == 5U &&
+              Count(Job::TILT) == 10U && Count(Job::OUTPUT_COMP) == 2U,
+              "Fixed schedule does not meet the intended job counts");
+#if MAIN_LOOP_RATE_HZ == 2000
+static_assert(EstimatedPeakUs() <= MAIN_LOOP_PERIOD_US,
+              "Even the 2kHz estimated average-cost plan is infeasible");
+#endif
+} // namespace KssArmedSchedule
 
 /*
  * IMU interrupt_latest용 divider.
