@@ -150,11 +150,33 @@ esp_err_t KSSDrone::Arming(const float dt)
 esp_err_t KSSDrone::Armed(const float dt)
 {
     if (this->state_ != DroneState::ARMED)
-    {
         return ESP_OK;
-    }
 
-    esp_err_t ret = ESP_OK;
+    // 20ms fixed cyclic executive. Do not use a second dt-based gate in
+    // the jobs: schedule membership alone determines whether they run.
+    using Job = KssArmedSchedule::Job;
+    const uint16_t mask = KssArmedSchedule::Mask(this->armed_fixed_slot_);
+    this->armed_fixed_slot_ =
+        static_cast<uint16_t>((this->armed_fixed_slot_ + 1U) %
+                              KssArmedSchedule::kSlotCount);
+    for (float& elapsed : this->armed_fixed_elapsed_)
+        elapsed = std::min(elapsed + dt, 0.050f);
+
+    const auto due = [mask](const Job job)
+    {
+        return (mask & KssArmedSchedule::Bit(job)) != 0U;
+    };
+    // The real dt since the last scheduled execution is used for filters
+    // and integrators. If a slot runs late we do not busy-catch-up jobs.
+    const auto take_dt = [this](const Job job)
+    {
+        float& accum =
+            this->armed_fixed_elapsed_[static_cast<uint8_t>(job)];
+        const float elapsed =
+            std::clamp(accum, MAIN_LOOP_DT_MIN_SEC, MAIN_LOOP_DT_MAX_SEC);
+        accum = 0.0f;
+        return elapsed;
+    };
 
     ArmedContext ctx{};
 #if ENABLE_ARMED_TIMING_PROFILE
@@ -164,40 +186,37 @@ esp_err_t KSSDrone::Armed(const float dt)
 #if ENABLE_ARMED_TIMING_PROFILE
     this->armed_prof_.Record(ArmedTimingStage::CONTEXT, prof_ctx);
 #endif
+    esp_err_t ret = ESP_OK;
 
-    float failsafe_dt = 0.0f;
-    if (ConsumePeriodicDt(this->armed_failsafe_dt_accum_,
-                        dt,
-                        ARMED_FAILSAFE_PERIOD_SEC,
-                        failsafe_dt))
+    if (due(Job::FAILSAFE))
     {
+        const float elapsed = take_dt(Job::FAILSAFE);
 #if ENABLE_ARMED_TIMING_PROFILE
-        const uint32_t prof_failsafe = this->armed_prof_.Mark();
+        const uint32_t p = this->armed_prof_.Mark();
 #endif
-        ret = this->ArmedFailsafeFast(failsafe_dt);
+        ret = this->ArmedFailsafeFast(elapsed);
 #if ENABLE_ARMED_TIMING_PROFILE
-        this->armed_prof_.Record(ArmedTimingStage::FAILSAFE, prof_failsafe);
+        this->armed_prof_.Record(ArmedTimingStage::FAILSAFE, p);
 #endif
-        if (ret != ESP_OK || this->state_ != DroneState::ARMED)
-        {
-            return ret;
-        }
+        if (ret != ESP_OK || this->state_ != DroneState::ARMED) return ret;
     }
 
 #if ENABLE_ARMED_TIMING_PROFILE
-    const bool prof_due_cmd = this->armed_prof_.sampling && (ctx.cmd_valid) &&
-        (this->armed_command_dt_accum_.phase_s + dt >= ARMED_COMMAND_PERIOD_SEC);
     const uint32_t prof_cmd = this->armed_prof_.Mark();
 #endif
-    ret = this->ArmedCommandMedium(dt, ctx);
-#if ENABLE_ARMED_TIMING_PROFILE
-    this->armed_prof_.Record(prof_due_cmd ? ArmedTimingStage::CMD_CALC : ArmedTimingStage::CMD_SKIP, prof_cmd);
-#endif
-    if (ret != ESP_OK || this->state_ != DroneState::ARMED)
+    if (due(Job::COMMAND))
     {
-        return ret;
+        ret = this->ArmedCommandMedium(take_dt(Job::COMMAND), ctx);
+        if (ret != ESP_OK || this->state_ != DroneState::ARMED) return ret;
     }
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(due(Job::COMMAND) ?
+        ArmedTimingStage::CMD_CALC : ArmedTimingStage::CMD_SKIP, prof_cmd);
+#endif
 
+    if (due(Job::IMU))
+    {
+        const float imu_dt = take_dt(Job::IMU);
 #if ENABLE_ARMED_TIMING_PROFILE
     const uint32_t prof_imu = this->armed_prof_.Mark();
 #endif
@@ -212,9 +231,9 @@ esp_err_t KSSDrone::Armed(const float dt)
     IMUReadTimingSample imu_phase_timing{};
 #endif
 #if ENABLE_IMU_TIMING_PROFILE
-    ret = this->ArmedImuFast(dt, ctx, imu_sample ? &imu_phase_timing : nullptr);
+    ret = this->ArmedImuFast(imu_dt, ctx, imu_sample ? &imu_phase_timing : nullptr);
 #else
-    ret = this->ArmedImuFast(dt, ctx);
+    ret = this->ArmedImuFast(imu_dt, ctx);
 #endif
 #if ENABLE_IMU_TIMING_PROFILE
     if (imu_sample && ret == ESP_OK && ctx.imu_valid)
@@ -246,139 +265,102 @@ esp_err_t KSSDrone::Armed(const float dt)
 #if ENABLE_ARMED_TIMING_PROFILE
     this->armed_prof_.Record(ArmedTimingStage::IMU, prof_imu);
 #endif
-    if (ret != ESP_OK || this->state_ != DroneState::ARMED)
-    {
-        return ret;
+
+        if (ret != ESP_OK || this->state_ != DroneState::ARMED) return ret;
     }
 
 #if ENABLE_ARMED_TIMING_PROFILE
-    const bool prof_due_est = this->armed_prof_.sampling && (ctx.imu_valid && ctx.target_valid) &&
-        (this->armed_estimator_dt_accum_.phase_s + dt >= ARMED_ESTIMATOR_PERIOD_SEC);
     const uint32_t prof_est = this->armed_prof_.Mark();
 #endif
-    ret = this->ArmedEstimatorMedium(dt, ctx);
-#if ENABLE_ARMED_TIMING_PROFILE
-    this->armed_prof_.Record(prof_due_est ? ArmedTimingStage::EST_CALC : ArmedTimingStage::EST_SKIP, prof_est);
-#endif
-    if (ret != ESP_OK || this->state_ != DroneState::ARMED)
+    if (due(Job::ESTIMATOR))
     {
-        return ret;
+        ret = this->ArmedEstimatorMedium(take_dt(Job::ESTIMATOR), ctx);
+        if (ret != ESP_OK || this->state_ != DroneState::ARMED) return ret;
     }
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(due(Job::ESTIMATOR) ?
+        ArmedTimingStage::EST_CALC : ArmedTimingStage::EST_SKIP, prof_est);
+#endif
 
 #if ENABLE_ARMED_TIMING_PROFILE
-    const bool prof_due_air = this->armed_prof_.sampling && (ctx.target_valid) &&
-        (this->armed_airborne_dt_accum_.phase_s + dt >= ARMED_AIRBORNE_PERIOD_SEC);
     const uint32_t prof_air = this->armed_prof_.Mark();
 #endif
-    this->ArmedAirborneSlow(dt, ctx);
-#if ENABLE_ARMED_TIMING_PROFILE
-    this->armed_prof_.Record(prof_due_air ? ArmedTimingStage::AIR_CALC : ArmedTimingStage::AIR_SKIP, prof_air);
-#endif
-    if (this->state_ != DroneState::ARMED)
+    if (due(Job::AIRBORNE))
     {
-        return ESP_OK;
+        this->ArmedAirborneSlow(take_dt(Job::AIRBORNE), ctx);
+        if (this->state_ != DroneState::ARMED) return ESP_OK;
     }
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(due(Job::AIRBORNE) ?
+        ArmedTimingStage::AIR_CALC : ArmedTimingStage::AIR_SKIP, prof_air);
+#endif
 
 #if ENABLE_ARMED_TIMING_PROFILE
-    const bool prof_due_slow = this->armed_prof_.sampling && (ctx.cmd_valid && ctx.imu_valid && ctx.ekf_valid && ctx.state_valid && ctx.target_valid) &&
-        (this->armed_slow_comp_dt_accum_.phase_s + dt >= ARMED_SOFT_COMP_PERIOD_SEC);
     const uint32_t prof_slow = this->armed_prof_.Mark();
 #endif
-    this->ArmedSlowCompUpdate(dt, ctx);
-#if ENABLE_ARMED_TIMING_PROFILE
-    this->armed_prof_.Record(prof_due_slow ? ArmedTimingStage::SLOW_CALC : ArmedTimingStage::SLOW_SKIP, prof_slow);
-#endif
-    if (this->state_ != DroneState::ARMED)
+    if (due(Job::SLOW_COMP))
     {
-        return ESP_OK;
+        this->ArmedSlowCompUpdate(take_dt(Job::SLOW_COMP), ctx);
+        if (this->state_ != DroneState::ARMED) return ESP_OK;
+    }
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(due(Job::SLOW_COMP) ?
+        ArmedTimingStage::SLOW_CALC : ArmedTimingStage::SLOW_SKIP, prof_slow);
+#endif
+
+    if (due(Job::TILT))
+    {
+#if ENABLE_ARMED_TIMING_PROFILE
+        const uint32_t p = this->armed_prof_.Mark();
+#endif
+        this->ArmedTiltSafetyMedium(take_dt(Job::TILT), ctx);
+#if ENABLE_ARMED_TIMING_PROFILE
+        this->armed_prof_.Record(ArmedTimingStage::TILT, p);
+#endif
+        if (this->state_ != DroneState::ARMED) return ESP_OK;
     }
 
-    float tilt_dt = 0.0f;
-    if (ConsumePeriodicDt(this->armed_tilt_safety_dt_accum_,
-                        dt,
-                        ARMED_TILT_SAFETY_PERIOD_SEC,
-                        tilt_dt))
+    if (due(Job::PID))
     {
 #if ENABLE_ARMED_TIMING_PROFILE
-        const uint32_t prof_tilt = this->armed_prof_.Mark();
+        const uint32_t p = this->armed_prof_.Mark();
 #endif
-        this->ArmedTiltSafetyMedium(tilt_dt, ctx);
+        ret = this->ArmedControlFast(take_dt(Job::PID), ctx);
 #if ENABLE_ARMED_TIMING_PROFILE
-        this->armed_prof_.Record(ArmedTimingStage::TILT, prof_tilt);
+        this->armed_prof_.Record(ArmedTimingStage::PID, p);
 #endif
-        if (this->state_ != DroneState::ARMED)
-        {
-            return ESP_OK;
-        }
+        if (ret != ESP_OK || this->state_ != DroneState::ARMED) return ret;
     }
 
-    /*
-     * 2kHz PID
-     */
-    float control_dt = 0.0f;
-    if (ConsumePeriodicDt(this->armed_control_dt_accum_,
-                          dt,
-                          ARMED_CONTROL_PERIOD_SEC,
-                          control_dt))
+#if ENABLE_ARMED_TIMING_PROFILE
+    const uint32_t prof_out = this->armed_prof_.Mark();
+#endif
+    if (due(Job::OUTPUT_COMP))
     {
-#if ENABLE_ARMED_TIMING_PROFILE
-        const uint32_t prof_pid = this->armed_prof_.Mark();
-#endif
-        ret = this->ArmedControlFast(control_dt, ctx);
-#if ENABLE_ARMED_TIMING_PROFILE
-        this->armed_prof_.Record(ArmedTimingStage::PID, prof_pid);
-#endif
-        if (ret != ESP_OK || this->state_ != DroneState::ARMED)
-        {
-            return ret;
-        }
+        this->ArmedOutputCompMedium(take_dt(Job::OUTPUT_COMP), ctx);
+        if (this->state_ != DroneState::ARMED) return ESP_OK;
     }
-
-    /*
-     * output compensation은 PID 이후에 실행.
-     * ctx.pid_out 또는 armed_pid_out_cache_를 기준으로 계산할 수 있음.
-     */
 #if ENABLE_ARMED_TIMING_PROFILE
-    const bool prof_due_outc = this->armed_prof_.sampling && (ctx.target_valid) &&
-        (this->armed_output_comp_dt_accum_.phase_s + dt >= ARMED_OUTPUT_COMP_PERIOD_SEC);
-    const uint32_t prof_outc = this->armed_prof_.Mark();
+    this->armed_prof_.Record(due(Job::OUTPUT_COMP) ?
+        ArmedTimingStage::OUTC_CALC : ArmedTimingStage::OUTC_SKIP, prof_out);
 #endif
-    this->ArmedOutputCompMedium(dt, ctx);
-#if ENABLE_ARMED_TIMING_PROFILE
-    this->armed_prof_.Record(prof_due_outc ? ArmedTimingStage::OUTC_CALC : ArmedTimingStage::OUTC_SKIP, prof_outc);
-#endif
-    if (this->state_ != DroneState::ARMED)
-    {
-        return ESP_OK;
-    }
 
-    /*
-     * 1kHz DShot output
-     */
-    float motor_dt = 0.0f;
-    if (ConsumePeriodicDt(this->armed_motor_output_dt_accum_,
-                          dt,
-                          ARMED_MOTOR_OUTPUT_PERIOD_SEC,
-                          motor_dt))
+    if (due(Job::MOTOR))
     {
+        const float elapsed = take_dt(Job::MOTOR);
         if (this->armed_pid_valid_)
         {
             ctx.pid_out = this->armed_pid_out_cache_;
-
 #if ENABLE_ARMED_TIMING_PROFILE
-            const uint32_t prof_motor = this->armed_prof_.Mark();
+            const uint32_t p = this->armed_prof_.Mark();
 #endif
-            ret = this->ArmedOutputFast(motor_dt, ctx);
+            ret = this->ArmedOutputFast(elapsed, ctx);
 #if ENABLE_ARMED_TIMING_PROFILE
-            this->armed_prof_.Record(ArmedTimingStage::MOTOR, prof_motor);
+            this->armed_prof_.Record(ArmedTimingStage::MOTOR, p);
 #endif
-            if (ret != ESP_OK)
-            {
-                return ret;
-            }
+            if (ret != ESP_OK) return ret;
         }
     }
-
     return ESP_OK;
 }
 
