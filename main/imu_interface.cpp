@@ -99,6 +99,30 @@ esp_err_t IMUInterface::Initialize(board_handles_t* bhandle)
 
     this->state_ = IMUState::RUN;
     return ESP_OK;
+#elif IMU_READ_MODE == IMU_READ_MODE_INTERRUPT_LATEST
+    // Initialize sensor/ISR and publish a first valid snapshot before the
+    // drone main task can enter bias calibration. The worker starts in RUN.
+    ret = this->Init();
+    if (ret != ESP_OK)
+    {
+        this->state_ = IMUState::ERR;
+        return ret;
+    }
+    ret = this->SeedInitialSnapshot();
+    if (ret != ESP_OK)
+    {
+        this->state_ = IMUState::ERR;
+        this->IMUUnregisterInterrupt();
+        return ret;
+    }
+    this->state_ = IMUState::RUN;
+    ret = this->StartTask();
+    if (ret != ESP_OK)
+    {
+        this->state_ = IMUState::ERR;
+        this->IMUUnregisterInterrupt();
+    }
+    return ret;
 #else
     return this->StartTask();
 #endif
