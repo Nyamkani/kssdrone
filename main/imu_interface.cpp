@@ -1,4 +1,5 @@
 #include "imu_interface.h"
+#include "esp_cpu.h"
 #include "pins.h"
 #include "driver/gpio.h"
 
@@ -888,24 +889,36 @@ esp_err_t IMUInterface::GetParsedIMURadsData(IMU_PARESED_DATA& data)
     return ESP_OK;
 }
 
-esp_err_t IMUInterface::GetParsedIMURadsDataWithFrame(SharedSnapshotFrame<IMU_PARESED_DATA>& frame)
+esp_err_t IMUInterface::GetParsedIMURadsDataWithFrame(SharedSnapshotFrame<IMU_PARESED_DATA>& frame,
+                                                          IMUReadTimingSample* timing)
 {
-    return this->GetControlImuFrame(frame);
+    return this->GetControlImuFrame(frame, timing);
 }
 
 
 
-esp_err_t IMUInterface::GetControlImuFrame(SharedSnapshotFrame<IMU_PARESED_DATA>& frame)
+esp_err_t IMUInterface::GetControlImuFrame(SharedSnapshotFrame<IMU_PARESED_DATA>& frame,
+                                              IMUReadTimingSample* timing)
 {
 #if IMU_READ_MODE == IMU_READ_MODE_DIRECT
 
+    const uint32_t raw_begin = timing ? esp_cpu_get_cycle_count() : 0U;
     esp_err_t ret = this->ReadIMUData();
+    if (timing)
+    {
+        timing->raw_cycles = static_cast<uint32_t>(esp_cpu_get_cycle_count()) - raw_begin;
+    }
     if (ret != ESP_OK)
     {
         return ret;
     }
 
+    const uint32_t parse_begin = timing ? esp_cpu_get_cycle_count() : 0U;
     ret = this->ParseImuData();
+    if (timing)
+    {
+        timing->parse_cycles = static_cast<uint32_t>(esp_cpu_get_cycle_count()) - parse_begin;
+    }
     if (ret != ESP_OK)
     {
         return ret;
