@@ -445,9 +445,30 @@ bool KSSDrone::TryPrintMainLoopStats()
 
     // Start a clean segment on entering the critical flight-control states.
     if (in_flight && !this->was_flight_)
+    {
         reset();
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        for (auto& slot : this->armed_slot_active_)
+            slot = {};
+        this->armed_slot_capture_ = true;
+        // A new flight supersedes any unfinished old slot dump.
+        this->armed_slot_dump_pending_ = false;
+#endif
+    }
 
     const bool left_flight = this->was_flight_ && !in_flight;
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+    if (left_flight)
+    {
+        this->armed_slot_capture_ = false;
+        for (uint16_t i = 0; i < KssArmedSchedule::kSlotCount; ++i)
+            this->armed_slot_finished_[i] = this->armed_slot_active_[i];
+        this->armed_slot_dump_index_ = 0U;
+        this->armed_slot_dump_last_us_ = 0;
+        this->armed_slot_dump_pending_ = true;
+        ++this->armed_slot_dump_flight_;
+    }
+#endif
     this->was_flight_ = in_flight;
     if (in_flight)
         this->last_flight_state_ = static_cast<uint8_t>(this->state_);
@@ -519,6 +540,52 @@ bool KSSDrone::TryPrintMainLoopStats()
             printed = true;
         }
     }
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+    // Drain one slot per 50ms only in DISARMED, interleaved with
+    // the existing buffered 1Hz reports (no multi-line output burst).
+    if (this->state_ == DroneState::DISARMED &&
+        this->armed_slot_dump_pending_ && !printed)
+    {
+        const int64_t now_us = esp_timer_get_time();
+        if (this->armed_slot_dump_last_us_ == 0 ||
+            now_us - this->armed_slot_dump_last_us_ >= 50000LL)
+        {
+            this->armed_slot_dump_last_us_ = now_us;
+            const uint16_t index = this->armed_slot_dump_index_;
+            if (index < KssArmedSchedule::kSlotCount)
+            {
+                const auto& s = this->armed_slot_finished_[index];
+                const uint32_t avg_work = s.count
+                    ? static_cast<uint32_t>(s.sum_work_us / s.count) : 0U;
+                ESP_LOGI(TAG,
+                    "SLOT_TIME flight=%lu S%02u count=%lu "
+                    "work(min/avg/max)=%lu/%lu/%luus "
+                    "max(pre/fast/armed/slow)=%lu/%lu/%lu/%luus "
+                    "work_over=%lu normal_gap_max=%luus "
+                    "gap_over(500/1000)=%lu/%lu",
+                    static_cast<unsigned long>(this->armed_slot_dump_flight_),
+                    static_cast<unsigned>(index),
+                    static_cast<unsigned long>(s.count),
+                    static_cast<unsigned long>(
+                        s.count ? s.min_work_us : 0U),
+                    static_cast<unsigned long>(avg_work),
+                    static_cast<unsigned long>(s.max_work_us),
+                    static_cast<unsigned long>(s.max_pre_us),
+                    static_cast<unsigned long>(s.max_fast_bg_us),
+                    static_cast<unsigned long>(s.max_armed_us),
+                    static_cast<unsigned long>(s.max_slow_bg_us),
+                    static_cast<unsigned long>(s.work_over_budget),
+                    static_cast<unsigned long>(s.max_normal_gap_us),
+                    static_cast<unsigned long>(s.normal_gap_over_budget),
+                    static_cast<unsigned long>(s.normal_gap_over_1000us));
+                ++this->armed_slot_dump_index_;
+                printed = true;
+            }
+            if (this->armed_slot_dump_index_ >= KssArmedSchedule::kSlotCount)
+                this->armed_slot_dump_pending_ = false;
+        }
+    }
+#endif
     return printed;
 #else
     return false;
