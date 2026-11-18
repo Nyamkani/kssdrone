@@ -432,7 +432,8 @@ if (this->drone_mode_ == DroneMode::ANGLE_SELF_LEVEL)
  * EKF는 여기서 하지 않는다.
  */
 
-esp_err_t KSSDrone::ArmedImuFast(const float dt, ArmedContext& ctx)
+esp_err_t KSSDrone::ArmedImuFast(const float dt, ArmedContext& ctx,
+                                 IMUReadTimingSample* timing)
 {
     (void)ctx;
 
@@ -451,7 +452,7 @@ esp_err_t KSSDrone::ArmedImuFast(const float dt, ArmedContext& ctx)
      */
     SharedSnapshotFrame<IMU_PARESED_DATA> imu_frame{};
 
-    esp_err_t ret = this->imu_interface_.GetParsedIMURadsDataWithFrame(imu_frame);
+    esp_err_t ret = this->imu_interface_.GetParsedIMURadsDataWithFrame(imu_frame, timing);
     if (ret != ESP_OK)
     {
         ctx.imu_valid = false;
