@@ -76,7 +76,7 @@ extern "C" void app_main(void)
         return;
     }
 
-    ESP_LOGI(tag, "KSS_DRONE FW Version %.3f", FW_VERSION);
+    ESP_LOGI(tag, "KSS_DRONE FW Version %s", FW_VERSION_STRING);
     
     vTaskDelete(nullptr);
 
@@ -159,7 +159,7 @@ extern "C" void app_main(void)
 
 //     TestMotorsSequential(motor_interface_);
 
-//     ESP_LOGI(tag, "KSS_DRONE FW Version %.3f", FW_VERSION);
+//     ESP_LOGI(tag, "KSS_DRONE FW Version %s", FW_VERSION_STRING);
     
 //     vTaskDelete(nullptr);
 
