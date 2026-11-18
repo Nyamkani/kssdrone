@@ -118,7 +118,10 @@ Landing -> Disarmed
 #define ENABLE_RMT_OUTPUT_PROFILE  0  // 1: Enable, 0: Disable
 #define ENABLE_MOTOR_OUTPUT_COUNT 1
 #define PERIODIC_TIMER_USE_FMOD  0  // 1: 기존 fmod, 0: 반복 뺄셈
-#define ENABLE_ARMED_TIMING_PROFILE 1  // test branch only; 0: compile out
+#define ENABLE_ARMED_TIMING_PROFILE 0  // legacy multi-stage profiler: disabled
+#define ENABLE_IMU_TIMING_PROFILE 1    // test: IMU-only sampled profiler
+#define IMU_TIMING_SAMPLE_EVERY 31U
+#define IMU_TIMING_REPORT_SAMPLES 128U
 #define ARMED_TIMING_SAMPLE_EVERY 17 // non-harmonic with 2/4/8/20 loop subrates
 #define ARMED_TIMING_REPORT_SEC 2.0f
 
@@ -219,6 +222,15 @@ struct ArmedProfileStats
 };
 #endif
 
+#if ENABLE_IMU_TIMING_PROFILE
+struct ImuTimingStats
+{
+    uint32_t sample_slot = 0;
+    uint32_t samples = 0;
+    uint64_t sum_cycles = 0;
+    uint32_t max_cycles = 0;
+};
+#endif
 
 struct ArmedContext
 {
@@ -346,6 +358,9 @@ class KSSDrone
         float test_log_dt_ = 0.0f;
 #if ENABLE_ARMED_TIMING_PROFILE
         ArmedProfileStats armed_prof_{};
+#endif
+#if ENABLE_IMU_TIMING_PROFILE
+        ImuTimingStats imu_timing_{};
 #endif
 
         /*
