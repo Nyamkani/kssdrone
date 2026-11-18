@@ -332,53 +332,50 @@ void KSSDrone::UpdateMainLoopStats(const float raw_dt_s)
 #endif
 }
 
-void KSSDrone::TryPrintMainLoopStats()
+void KSSDrone::PrintMainLoopReport(const LoopReport& r, const bool buffered)
 {
 #if ENABLE_DRONE_MAIN_STATS_LOG
-    if (this->loop_stats_.elapsed_s < 1.0f)
-    {
-        return;
-    }
-
     ESP_LOGI(TAG,
         "KSS loop state=%d hz=%lu avg=%.3fms min=%.3fms max=%.3fms "
         "over2=%lu over5=%lu over10=%lu wdt=%lu motor=%lu "
         "sch_miss=%lu sch_late_max=%luus "
         "imu=%lu/%lu/%lu age=%.1f/%lld/%lldus "
-        "seq_d=0:%lu 1:%lu 2:%lu 3p:%lu last=%lu/%lu",
+        "seq_d=0:%lu 1:%lu 2:%lu 3p:%lu last=%lu/%lu buffered=%u report=%lu",
 
-        static_cast<int>(this->state_),
-        this->loop_stats_.count,
-        this->loop_stats_.AvgDtS() * 1000.0f,
-        this->loop_stats_.min_dt_s * 1000.0f,
-        this->loop_stats_.max_dt_s * 1000.0f,
+        static_cast<int>(static_cast<DroneState>(r.measured_state)),
+        r.loop.count,
+        r.loop.AvgDtS() * 1000.0f,
+        r.loop.min_dt_s * 1000.0f,
+        r.loop.max_dt_s * 1000.0f,
 
-        this->loop_stats_.over_2ms,
-        this->loop_stats_.over_5ms,
-        this->loop_stats_.over_10ms,
-        this->loop_stats_.wdt_guard,   // 반드시 여기
-        static_cast<unsigned long>(this->motor_output_count_),
-        static_cast<unsigned long>(this->armed_fixed_deadline_miss_),
-        static_cast<unsigned long>(this->armed_fixed_max_late_us_),
+        r.loop.over_2ms,
+        r.loop.over_5ms,
+        r.loop.over_10ms,
+        r.loop.wdt_guard,   // 반드시 여기
+        static_cast<unsigned long>(r.motor),
+        static_cast<unsigned long>(r.deadline_miss),
+        static_cast<unsigned long>(r.deadline_max_us),
 
-        this->imu_frame_stats_.frame_count,
-        this->imu_frame_stats_.invalid_count,
-        this->imu_frame_stats_.stale_count,
+        r.imu.frame_count,
+        r.imu.invalid_count,
+        r.imu.stale_count,
 
-        this->imu_frame_stats_.AvgAgeUs(),
-        this->imu_frame_stats_.MinAgeUsForLog(),
-        this->imu_frame_stats_.age_max_us,
+        r.imu.AvgAgeUs(),
+        r.imu.MinAgeUsForLog(),
+        r.imu.age_max_us,
 
-        this->imu_frame_stats_.delta0_count,
-        this->imu_frame_stats_.delta1_count,
-        this->imu_frame_stats_.delta2_count,
-        this->imu_frame_stats_.delta3p_count,
+        r.imu.delta0_count,
+        r.imu.delta1_count,
+        r.imu.delta2_count,
+        r.imu.delta3p_count,
 
-        this->imu_frame_stats_.last_seq_for_log,
-        this->imu_frame_stats_.last_sample_count
+        r.imu.last_seq_for_log,
+        r.imu.last_sample_count,
+        static_cast<unsigned>(buffered ? 1U : 0U),
+        static_cast<unsigned long>(r.serial)
     );
 #if ENABLE_BG_SCHED_STATS_LOG
-    const auto& bg = this->bg_schedule_stats_;
+    const auto& bg = r.bg;
     if (bg.battery_deferred || bg.telemetry_deferred || bg.led_deferred ||
         bg.battery_forced || bg.telemetry_forced || bg.led_forced)
     {
@@ -399,11 +396,12 @@ void KSSDrone::TryPrintMainLoopStats()
 #endif
     // Attribution follows the previous loop. 'log=1' marks the 1Hz
     // KSS statistics print within that iteration; other logs aren't tagged.
-    const auto& gap = this->loop_gap_causes_;
+    const auto& gap = r.gap;
     ESP_LOGI(TAG,
         "GAP_CAUSE idle_max=%luus normal_max=%luus guard_max=%luus "
         "over2(i/n)=%lu/%lu idle(n/guard)=%lu/%lu "
-        "peak=%luus kind=%u slot=%u work=%luus slowbg=%u log=%u",
+        "peak=%luus kind=%u slot=%u work=%luus slowbg=%u log=%u "
+        "buffered=%u report=%lu",
         static_cast<unsigned long>(gap.max_idle.gap_us),
         static_cast<unsigned long>(gap.max_normal.gap_us),
         static_cast<unsigned long>(gap.max_guard.gap_us),
@@ -416,18 +414,116 @@ void KSSDrone::TryPrintMainLoopStats()
         static_cast<unsigned>(gap.max_all.slot),
         static_cast<unsigned long>(gap.max_all.work_us),
         static_cast<unsigned>(gap.max_all.slow_bg),
-        static_cast<unsigned>(gap.max_all.main_log));
+        static_cast<unsigned>(gap.max_all.main_log),
+        static_cast<unsigned>(buffered ? 1U : 0U),
+        static_cast<unsigned long>(r.serial));
 
-    this->loop_gap_causes_.Reset();
-    this->bg_schedule_stats_.Reset();
-    this->armed_fixed_deadline_miss_ = 0U;
-    this->armed_fixed_max_late_us_ = 0U;
-    this->loop_stats_.Reset();
-    this->imu_frame_stats_.ResetKeepLastSeq();
-    this->motor_output_count_ = 0;
+
+#else
+    (void)r;
+    (void)buffered;
 #endif
 }
 
+bool KSSDrone::TryPrintMainLoopStats()
+{
+#if ENABLE_DRONE_MAIN_STATS_LOG
+    const bool in_flight =
+        this->state_ == DroneState::ARMED ||
+        this->state_ == DroneState::LANDING;
+
+    const auto reset = [this]()
+    {
+        this->loop_stats_.Reset();
+        this->imu_frame_stats_.ResetKeepLastSeq();
+        this->loop_gap_causes_.Reset();
+        this->bg_schedule_stats_.Reset();
+        this->armed_fixed_deadline_miss_ = 0U;
+        this->armed_fixed_max_late_us_ = 0U;
+        this->motor_output_count_ = 0U;
+    };
+
+    // Start a clean segment on entering the critical flight-control states.
+    if (in_flight && !this->was_flight_)
+        reset();
+
+    const bool left_flight = this->was_flight_ && !in_flight;
+    this->was_flight_ = in_flight;
+    if (in_flight)
+        this->last_flight_state_ = static_cast<uint8_t>(this->state_);
+
+    bool printed = false;
+    if (this->loop_stats_.elapsed_s >= 1.0f || left_flight)
+    {
+        if (this->loop_stats_.count > 0U)
+        {
+            LoopReport report{};
+            report.loop = this->loop_stats_;
+            report.gap = this->loop_gap_causes_;
+            report.imu = this->imu_frame_stats_;
+            report.bg = this->bg_schedule_stats_;
+            report.motor = this->motor_output_count_;
+            report.deadline_miss = this->armed_fixed_deadline_miss_;
+            report.deadline_max_us = this->armed_fixed_max_late_us_;
+            report.measured_state = left_flight
+                ? this->last_flight_state_
+                : static_cast<uint8_t>(this->state_);
+            report.serial = ++this->report_serial_;
+
+            if (in_flight || left_flight)
+            {
+                // One 1Hz snapshot in RAM; never ESP_LOG on ARMED/LANDING.
+                // Drop the oldest when the 48-report ring is full.
+                if (this->deferred_count_ == LOOP_REPORT_CAPACITY)
+                {
+                    this->deferred_read_ = static_cast<uint8_t>(
+                        (this->deferred_read_ + 1U) % LOOP_REPORT_CAPACITY);
+                    --this->deferred_count_;
+                    ++this->deferred_dropped_;
+                }
+                this->deferred_loop_reports_[this->deferred_write_] = report;
+                this->deferred_write_ = static_cast<uint8_t>(
+                    (this->deferred_write_ + 1U) % LOOP_REPORT_CAPACITY);
+                ++this->deferred_count_;
+            }
+            else
+            {
+                this->PrintMainLoopReport(report, false);
+                printed = true;
+            }
+        }
+        reset();
+    }
+
+    // Serial output is allowed only when motors are disarmed.
+    // Drain at most one captured 1Hz report per 100ms to avoid long bursts.
+    if (this->state_ == DroneState::DISARMED &&
+        this->deferred_count_ != 0U)
+    {
+        const int64_t now_us = esp_timer_get_time();
+        if (this->deferred_flush_us_ == 0 ||
+            now_us - this->deferred_flush_us_ >= 100000LL)
+        {
+            this->deferred_flush_us_ = now_us;
+            if (this->deferred_dropped_ > 0U)
+            {
+                ESP_LOGW(TAG, "KSS buffered reports dropped=%lu (oldest)",
+                    static_cast<unsigned long>(this->deferred_dropped_));
+                this->deferred_dropped_ = 0U;
+            }
+            this->PrintMainLoopReport(
+                this->deferred_loop_reports_[this->deferred_read_], true);
+            this->deferred_read_ = static_cast<uint8_t>(
+                (this->deferred_read_ + 1U) % LOOP_REPORT_CAPACITY);
+            --this->deferred_count_;
+            printed = true;
+        }
+    }
+    return printed;
+#else
+    return false;
+#endif
+}
 
 void KSSDrone::TryPrintDisarmTimingStats()
 {
