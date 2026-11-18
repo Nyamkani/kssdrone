@@ -695,6 +695,7 @@ class KSSDrone
         //task log
         // loop timing statistics
         LoopTimingStats loop_stats_{};
+        MainLoopGapCauseStats loop_gap_causes_{};
         ImuFrameStats imu_frame_stats_{};
         DisarmReason debug_disarm_reason_ = DisarmReason::NONE;
 
