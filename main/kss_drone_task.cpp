@@ -84,15 +84,10 @@ void KSSDrone::MainLoop()
                 raw_dt, previous_wait, previous_slot, previous_work_us,
                 previous_slow_bg, previous_main_log);
         }
-        // TryPrintMainLoopStats() prints/reset counters on the same iteration.
-        // Tag that print to the CURRENT work item; it can affect the NEXT gap.
-        const bool this_loop_main_log =
-            (this->loop_stats_.elapsed_s + raw_dt) >= 1.0f;
-#else
-        const bool this_loop_main_log = false;
 #endif
         this->UpdateMainLoopStats(raw_dt);
-        this->TryPrintMainLoopStats();
+        // Captured flight statistics do not count as serial output.
+        const bool this_loop_main_log = this->TryPrintMainLoopStats();
         this->TryPrintArmedProfileStats();
 
 #if ENABLE_DISARM_TIMING_PROFILE
