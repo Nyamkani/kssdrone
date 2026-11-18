@@ -692,6 +692,30 @@ class KSSDrone
         uint16_t last_control_seq_ = 0;
         bool control_seq_ready_ = false;
 
+        // Flight 1Hz statistics: fixed RAM ring, emitted only in DISARMED.
+        struct LoopReport
+        {
+            LoopTimingStats loop{};
+            MainLoopGapCauseStats gap{};
+            ImuFrameStats imu{};
+            BackgroundScheduleStats bg{};
+            uint32_t serial = 0U;
+            uint32_t motor = 0U;
+            uint32_t deadline_miss = 0U;
+            uint32_t deadline_max_us = 0U;
+            uint8_t measured_state = 0U;
+        };
+        static constexpr uint8_t LOOP_REPORT_CAPACITY = 48U;
+        LoopReport deferred_loop_reports_[LOOP_REPORT_CAPACITY]{};
+        uint8_t deferred_write_ = 0U;
+        uint8_t deferred_read_ = 0U;
+        uint8_t deferred_count_ = 0U;
+        uint8_t last_flight_state_ = 0U;
+        uint32_t deferred_dropped_ = 0U;
+        uint32_t report_serial_ = 0U;
+        int64_t deferred_flush_us_ = 0;
+        bool was_flight_ = false;
+
         //task log
         // loop timing statistics
         LoopTimingStats loop_stats_{};
@@ -773,7 +797,8 @@ class KSSDrone
 
         //log
         void UpdateMainLoopStats(float raw_dt_s);
-        void TryPrintMainLoopStats();
+        bool TryPrintMainLoopStats(); // true only if an ESP_LOG was executed
+        void PrintMainLoopReport(const LoopReport& report, bool buffered);
         void TryPrintArmedProfileStats();
         void TryPrintDisarmTimingStats();
         
