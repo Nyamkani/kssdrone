@@ -71,6 +71,11 @@ void KSSDrone::ResetArmedRuntime()
     this->armed_motor_output_dt_accum_ = ARMED_MOTOR_OUTPUT_PERIOD_SEC;
     this->armed_tilt_safety_dt_accum_ = ARMED_TILT_SAFETY_PERIOD_SEC;
     
+    this->armed_fixed_slot_ = 0U;
+    for (float& elapsed : this->armed_fixed_elapsed_) elapsed = 0.0f;
+    this->armed_fixed_deadline_miss_ = 0U;
+    this->armed_fixed_max_late_us_ = 0U;
+
     this->armed_last_cmd_us_ = 0;
     this->armed_log_dt_accum_ = 0.0f;
 
@@ -177,14 +182,7 @@ esp_err_t KSSDrone::ArmedCommandMedium(const float dt, ArmedContext& ctx)
         return ESP_OK;
     }
 
-    float cmd_dt = 0.0f;
-    if (!ConsumePeriodicDt(this->armed_command_dt_accum_,
-                           dt,
-                           ARMED_COMMAND_PERIOD_SEC,
-                           cmd_dt))
-    {
-        return ESP_OK;
-    }
+    const float cmd_dt = dt; // executed only in scheduled command slots
 
     // if (!this->active_cmd_valid_ || this->esp_now_interface_.IsTimeout())
      if (!this->active_cmd_valid_ || this->crsf_receiver_.IsTimeout())
@@ -532,24 +530,7 @@ esp_err_t KSSDrone::ArmedEstimatorMedium(const float dt, ArmedContext& ctx)
         return ESP_OK;
     }
 
-    float estimator_dt = 0.0f;
-    if (!ConsumePeriodicDt(this->armed_estimator_dt_accum_,
-                           dt,
-                           ARMED_ESTIMATOR_PERIOD_SEC,
-                           estimator_dt))
-    {
-        if (this->armed_state_valid_)
-        {
-            ctx.ekf_input = this->armed_ekf_input_cache_;
-            ctx.ekf_out = this->armed_ekf_out_cache_;
-            ctx.state = this->armed_state_cache_;
-
-            ctx.ekf_valid = this->armed_ekf_valid_;
-            ctx.state_valid = true;
-        }
-
-        return ESP_OK;
-    }
+    const float estimator_dt = dt; // held state loaded in Armed() on other slots
 
     const IMU_PARESED_DATA& imu = ctx.imu;
 
@@ -683,14 +664,7 @@ void KSSDrone::ArmedAirborneSlow(const float dt, ArmedContext& ctx)
         return;
     }
 
-    float airborne_dt = 0.0f;
-    if (!ConsumePeriodicDt(this->armed_airborne_dt_accum_,
-                           dt,
-                           ARMED_AIRBORNE_PERIOD_SEC,
-                           airborne_dt))
-    {
-        return;
-    }
+    const float airborne_dt = dt;
 
     this->UpdateAirborneState(airborne_dt, ctx.target);
 
@@ -714,14 +688,7 @@ void KSSDrone::ArmedSlowCompUpdate(const float dt, ArmedContext& ctx)
         return;
     }
 
-    float slow_dt = 0.0f;
-    if (!ConsumePeriodicDt(this->armed_slow_comp_dt_accum_,
-                           dt,
-                           ARMED_SOFT_COMP_PERIOD_SEC,
-                           slow_dt))
-    {
-        return;
-    }
+    const float slow_dt = dt;
 
     this->UpdatePseudoVelocitySlow(slow_dt, ctx);
     this->UpdateVoltageCompSlow(ctx);
@@ -1228,16 +1195,7 @@ void KSSDrone::ArmedOutputCompMedium(const float dt, ArmedContext& ctx)
         return;
     }
 
-    float comp_dt = 0.0f;
-    if (!ConsumePeriodicDt(this->armed_output_comp_dt_accum_,
-                           dt,
-                           ARMED_OUTPUT_COMP_PERIOD_SEC,
-                           comp_dt))
-    {
-        return;
-    }
-
-    (void)comp_dt;
+    (void)dt; // fixed 100Hz slot, no inner periodic gate
 
     /*
      * pid_out.throttle 기준.
