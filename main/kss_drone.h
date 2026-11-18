@@ -69,8 +69,10 @@ Landing -> Disarmed
 7. MixerOutput -> motor mixer output data
 */
 
-//firmware version
+// Firmware revision: v1.3-c aligns multi-rate execution with the existing FSM.
+// Keep the numeric revision for legacy consumers; use the full string for logs.
 #define FW_VERSION    1.3f
+#define FW_VERSION_STRING "v1.3-c"
 // auto gyro bias calibration
 #define GYRO_BIAS_CALIB_TIME_S        1.0f
 #define GYRO_BIAS_MAX_ABS_RAD_S       0.15f
