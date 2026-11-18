@@ -95,6 +95,9 @@ Landing -> Disarmed
 
 //BackgroundJob 
 #define CHECK_BATTERY_PERIOD_S  0.05f                // Check battery every 50ms (20Hz)
+// Optional CRSF TX: keep the implementation for a future telemetry-capable controller.
+// RX command cache and safety event processing remain active at all times.
+#define ENABLE_CRSF_TELEMETRY 0
 #define CHECK_SEND_TELEMETRY_S 0.1f      // Send telemetry every 100ms (10Hz)
 #define CHECK_SEND_LOG_S       0.1f            // Send log everyt 100ms (10hz)
 
@@ -114,7 +117,7 @@ Landing -> Disarmed
 
 //task log
 #define ENABLE_DRONE_MAIN_STATS_LOG  1
-#define ENABLE_ARMED_SLOT_TIMING_PROFILE 1 // S0-S39 per-flight RAM diagnostics
+#define ENABLE_ARMED_SLOT_TIMING_PROFILE 0 // enable only for diagnostics (high loop overhead)
 #define ENABLE_CMD_DETAIL_LOG 0
 #define ENABLE_RMT_OUTPUT_PROFILE  0  // 1: Enable, 0: Disable
 #define ENABLE_MOTOR_OUTPUT_COUNT 1
