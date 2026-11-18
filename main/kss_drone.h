@@ -120,7 +120,8 @@ Landing -> Disarmed
 #define PERIODIC_TIMER_USE_FMOD  0  // 1: 기존 fmod, 0: 반복 뺄셈
 #define ENABLE_ARMED_TIMING_PROFILE 0  // legacy multi-stage profiler: disabled
 #define ENABLE_IMU_TIMING_PROFILE 0    // test: IMU-only sampled profiler
-#define ENABLE_DISARM_TIMING_PROFILE 1
+#define ENABLE_DISARM_TIMING_PROFILE 0
+#define ENABLE_BG_SCHED_STATS_LOG 0  // enable only for separate BG diagnostics
 #define DISARM_TIMING_SAMPLE_EVERY 31U
 #define DISARM_TIMING_REPORT_SAMPLES 128U
 #define IMU_TIMING_SAMPLE_EVERY 31U
@@ -490,6 +491,10 @@ class KSSDrone
         float telemetry_send_dt_ = 0.0f;
         float log_send_dt_ = 0.0f;
         float led_update_dt_ = 0.0f;
+        uint16_t armed_fixed_slot_ = 0U;
+        float armed_fixed_elapsed_[static_cast<unsigned>(KssArmedSchedule::Job::COUNT)] = {};
+        uint32_t armed_fixed_deadline_miss_ = 0U;
+        uint32_t armed_fixed_max_late_us_ = 0U;
         BackgroundScheduleStats bg_schedule_stats_{};
 
         //test
