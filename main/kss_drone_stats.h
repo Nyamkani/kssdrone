@@ -4,6 +4,77 @@
 #include <climits>
 #include <algorithm>
 
+// Start-to-start gap attribution for the PREVIOUS loop.
+// Deliberately records into RAM only; the existing 1Hz report prints it.
+// A gap is NOT the same as CPU execution time or a hard-RT proof.
+struct MainLoopGapCauseStats
+{
+    enum class WaitCause : uint8_t
+    {
+        NORMAL = 0,
+        PERIODIC_IDLE = 1,
+        OVERRUN_GUARD = 2
+    };
+
+    struct Peak
+    {
+        uint32_t gap_us = 0U;
+        uint32_t work_us = 0U; // previous loop: start to end of slow BG
+        uint16_t slot = 0xFFFFU; // previous ARMED slot, or 0xFFFF
+        uint8_t slow_bg = 0U; // previous loop ran ProcessSlowBackground()
+        uint8_t main_log = 0U; // previous loop printed KSS loop statistics
+        WaitCause wait = WaitCause::NORMAL;
+    };
+
+    Peak max_all{};
+    Peak max_idle{};
+    Peak max_guard{};
+    Peak max_normal{};
+    uint32_t over_2ms_idle = 0U;
+    uint32_t over_2ms_normal = 0U;
+    uint32_t idle_events = 0U;
+    uint32_t guard_events = 0U;
+
+    void Observe(const float raw_dt_s, const WaitCause previous_wait,
+                 const uint16_t previous_slot, const uint32_t previous_work_us,
+                 const bool previous_slow_bg, const bool previous_main_log)
+    {
+        const float scaled = raw_dt_s * 1000000.0f;
+        const uint32_t gap_us = scaled > 0.0f
+            ? static_cast<uint32_t>(scaled + 0.5f) : 0U;
+
+        const Peak candidate{
+            gap_us, previous_work_us, previous_slot,
+            static_cast<uint8_t>(previous_slow_bg ? 1U : 0U),
+            static_cast<uint8_t>(previous_main_log ? 1U : 0U),
+            previous_wait
+        };
+
+        if (gap_us > max_all.gap_us) max_all = candidate;
+        if (previous_wait == WaitCause::NORMAL)
+        {
+            if (gap_us > max_normal.gap_us) max_normal = candidate;
+            if (gap_us > 2000U) ++over_2ms_normal;
+        }
+        else
+        {
+            ++idle_events;
+            if (gap_us > max_idle.gap_us) max_idle = candidate;
+            if (gap_us > 2000U) ++over_2ms_idle;
+            if (previous_wait == WaitCause::OVERRUN_GUARD)
+            {
+                ++guard_events;
+                if (gap_us > max_guard.gap_us) max_guard = candidate;
+            }
+        }
+    }
+
+    void Reset()
+    {
+        *this = MainLoopGapCauseStats{};
+    }
+};
+
 struct LoopTimingStats
 {
     float min_dt_s = 999.0f;
