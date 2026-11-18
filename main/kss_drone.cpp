@@ -448,6 +448,23 @@ void KSSDrone::TryPrintDisarmTimingStats()
         max_us(DisarmTimingStage::EKF_UPDATE),
         count(DisarmTimingStage::EKF_UPDATE));
 
+    // Unlike WORK/EKF, these event timings capture every actual
+    // battery, telemetry, and LED call while DISARMED.
+    ESP_LOGI(TAG,
+        "DISARM_TIMING BG_EVENT us(avg/max,n) "
+        "battery=%.2f/%.2f(%lu) "
+        "telemetry=%.2f/%.2f(%lu) "
+        "led=%.2f/%.2f(%lu)",
+        avg_us(DisarmTimingStage::BG_BATTERY),
+        max_us(DisarmTimingStage::BG_BATTERY),
+        count(DisarmTimingStage::BG_BATTERY),
+        avg_us(DisarmTimingStage::BG_TELEMETRY),
+        max_us(DisarmTimingStage::BG_TELEMETRY),
+        count(DisarmTimingStage::BG_TELEMETRY),
+        avg_us(DisarmTimingStage::BG_LED),
+        max_us(DisarmTimingStage::BG_LED),
+        count(DisarmTimingStage::BG_LED));
+
     prof.ResetWindow();
 #endif
 }
