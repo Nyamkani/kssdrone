@@ -209,18 +209,30 @@ esp_err_t KSSDrone::Armed(const float dt)
         this->imu_timing_.sample_slot = 0;
     }
     const uint32_t imu_start_cycles = imu_sample ? esp_cpu_get_cycle_count() : 0U;
+    IMUReadTimingSample imu_phase_timing{};
 #endif
-    ret = this->ArmedImuFast(dt, ctx);
 #if ENABLE_IMU_TIMING_PROFILE
-    if (imu_sample)
+    ret = this->ArmedImuFast(dt, ctx, imu_sample ? &imu_phase_timing : nullptr);
+#else
+    ret = this->ArmedImuFast(dt, ctx);
+#endif
+#if ENABLE_IMU_TIMING_PROFILE
+    if (imu_sample && ret == ESP_OK && ctx.imu_valid)
     {
         const uint32_t cycles = static_cast<uint32_t>(esp_cpu_get_cycle_count()) - imu_start_cycles;
-        this->imu_timing_.sum_cycles += cycles;
-        if (cycles > this->imu_timing_.max_cycles)
-        {
-            this->imu_timing_.max_cycles = cycles;
-        }
-        ++this->imu_timing_.samples;
+        const uint32_t raw = imu_phase_timing.raw_cycles;
+        const uint32_t parse = imu_phase_timing.parse_cycles;
+        const uint32_t remainder = cycles >= raw + parse ? cycles - raw - parse : 0U;
+        auto& stats = this->imu_timing_;
+        stats.sum_cycles += cycles;
+        if (cycles > stats.max_cycles) stats.max_cycles = cycles;
+        stats.raw_sum_cycles += raw;
+        if (raw > stats.raw_max_cycles) stats.raw_max_cycles = raw;
+        stats.parse_sum_cycles += parse;
+        if (parse > stats.parse_max_cycles) stats.parse_max_cycles = parse;
+        stats.remainder_sum_cycles += remainder;
+        if (remainder > stats.remainder_max_cycles) stats.remainder_max_cycles = remainder;
+        ++stats.samples;
     }
 #endif
 #if ENABLE_ARMED_TIMING_PROFILE
