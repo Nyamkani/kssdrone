@@ -238,6 +238,20 @@ void KSSDrone::MainLoop()
             ++this->disarm_timing_.sampled_loops;
         }
 #endif
+#if MAIN_LOOP_RATE_HZ > 1000
+        if (this->state_ == DroneState::ARMED)
+        {
+            const int64_t lateness_us =
+                esp_timer_get_time() - next_loop_us;
+            if (lateness_us > 0)
+            {
+                ++this->armed_fixed_deadline_miss_;
+                this->armed_fixed_max_late_us_ =
+                    std::max(this->armed_fixed_max_late_us_,
+                             static_cast<uint32_t>(lateness_us));
+            }
+        }
+#endif
         bool forced_idle_delay = false;
 
         if (this->state_ == DroneState::ARMED)
