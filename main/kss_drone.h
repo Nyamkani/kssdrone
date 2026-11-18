@@ -134,8 +134,12 @@ Landing -> Disarmed
 
 // Sampled, read-only timing profiler. The core is pinned; 32-bit cycle subtraction
 // is wrap-safe for the short intervals measured here. No allocations or per-loop logs.
-#if ENABLE_ARMED_TIMING_PROFILE
+#if ENABLE_ARMED_TIMING_PROFILE || ENABLE_IMU_TIMING_PROFILE
 #include "esp_cpu.h"
+#endif
+
+#if ENABLE_ARMED_TIMING_PROFILE
+
 
 enum class ArmedTimingStage : uint8_t
 {
