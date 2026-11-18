@@ -486,6 +486,26 @@ void KSSDrone::TryPrintArmedProfileStats()
         this->armed_prof_.ResetWindow();
     }
 #endif
+#if ENABLE_IMU_TIMING_PROFILE
+    if (this->state_ == DroneState::ARMED &&
+        this->imu_timing_.samples >= IMU_TIMING_REPORT_SAMPLES)
+    {
+        const double mhz = static_cast<double>(CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
+        const double avg_us =
+            static_cast<double>(this->imu_timing_.sum_cycles) /
+            (static_cast<double>(this->imu_timing_.samples) * mhz);
+        const double max_us =
+            static_cast<double>(this->imu_timing_.max_cycles) / mhz;
+
+        ESP_LOGI(TAG, "IMU_ONLY_TIMING avg=%.2fus max=%.2fus samples=%lu every=%lu",
+                 avg_us, max_us,
+                 static_cast<unsigned long>(this->imu_timing_.samples),
+                 static_cast<unsigned long>(IMU_TIMING_SAMPLE_EVERY));
+        this->imu_timing_.samples = 0;
+        this->imu_timing_.sum_cycles = 0;
+        this->imu_timing_.max_cycles = 0;
+    }
+#endif
 }
 
 void KSSDrone::UpdateImuFrameStats(
