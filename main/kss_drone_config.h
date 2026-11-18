@@ -51,26 +51,17 @@ static constexpr float MAIN_LOOP_FORCE_IDLE_INTERVAL_SEC =
 #define ARMED_CONTROL_RATE_HZ        2000
 #define ARMED_MOTOR_OUTPUT_RATE_HZ   1000
 /*
-2kHz:
-  IMU
-  PID
-
-1kHz:
-  DShot
-
-500Hz:
-  failsafe
-  EKF
-  tilt safety
-
-250Hz:
-  command
-  airborne
-  soft comp
-
-125Hz:
-  output comp
-*/
+ * v1.3-c: nominal per-job frequencies of the added 20ms / 40-slot
+ * ARMED scheduler (original FSM and control algorithms are unchanged).
+ * These are scheduled rates, not guaranteed measured execution rates.
+ *
+ * 2000Hz: IMU, rate PID
+ * 1000Hz: Motor / DSHOT (observed separately: approximately 995-997Hz)
+ *  500Hz: failsafe, EKF estimator, tilt safety
+ *  250Hz: airborne state, slow compensation
+ *  200Hz: command target (4 executions per 20ms; nonuniform 4/6ms gaps)
+ *  100Hz: output compensation
+ */
 
 
 static_assert(
