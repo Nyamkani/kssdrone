@@ -19,6 +19,7 @@
 
 #include <cmath>
 #include <atomic>
+#include <cstdint>
 
 
 #include "kss_drone_config.h"
@@ -96,6 +97,13 @@ enum class IMUState
 
 };
     
+// Optional one-shot timing output. nullptr means no cycle-counter reads.
+struct IMUReadTimingSample
+{
+    uint32_t raw_cycles = 0;
+    uint32_t parse_cycles = 0;
+};
+
 struct IMU_RAW_DATA
 {
     int16_t ax;
@@ -217,8 +225,10 @@ class IMUInterface
 
         esp_err_t GetParsedIMUDpsData(IMU_PARESED_DATA& data);
         esp_err_t GetParsedIMURadsData(IMU_PARESED_DATA& data);
-        esp_err_t GetParsedIMURadsDataWithFrame(SharedSnapshotFrame<IMU_PARESED_DATA>& frame);
-        esp_err_t GetControlImuFrame(SharedSnapshotFrame<IMU_PARESED_DATA>& frame);
+        esp_err_t GetParsedIMURadsDataWithFrame(SharedSnapshotFrame<IMU_PARESED_DATA>& frame,
+                                                IMUReadTimingSample* timing = nullptr);
+        esp_err_t GetControlImuFrame(SharedSnapshotFrame<IMU_PARESED_DATA>& frame,
+                                     IMUReadTimingSample* timing = nullptr);
 
         esp_err_t RunInterruptLatestMode();
         esp_err_t RunFifoInterruptMode();
