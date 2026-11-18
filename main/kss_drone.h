@@ -120,6 +120,9 @@ Landing -> Disarmed
 #define PERIODIC_TIMER_USE_FMOD  0  // 1: 기존 fmod, 0: 반복 뺄셈
 #define ENABLE_ARMED_TIMING_PROFILE 0  // legacy multi-stage profiler: disabled
 #define ENABLE_IMU_TIMING_PROFILE 0    // test: IMU-only sampled profiler
+#define ENABLE_DISARM_TIMING_PROFILE 1
+#define DISARM_TIMING_SAMPLE_EVERY 31U
+#define DISARM_TIMING_REPORT_SAMPLES 128U
 #define IMU_TIMING_SAMPLE_EVERY 31U
 #define IMU_TIMING_REPORT_SAMPLES 128U
 #define ARMED_TIMING_SAMPLE_EVERY 17 // non-harmonic with 2/4/8/20 loop subrates
@@ -134,7 +137,9 @@ Landing -> Disarmed
 
 // Sampled, read-only timing profiler. The core is pinned; 32-bit cycle subtraction
 // is wrap-safe for the short intervals measured here. No allocations or per-loop logs.
-#if ENABLE_ARMED_TIMING_PROFILE || ENABLE_IMU_TIMING_PROFILE
+#if ENABLE_ARMED_TIMING_PROFILE || \
+    ENABLE_IMU_TIMING_PROFILE || \
+    ENABLE_DISARM_TIMING_PROFILE
 #include "esp_cpu.h"
 #endif
 
@@ -242,6 +247,92 @@ struct ImuTimingStats
     uint64_t spi_sum_cycles = 0;
     uint32_t spi_max_cycles = 0;
 };
+#endif
+
+#if ENABLE_DISARM_TIMING_PROFILE
+
+enum class DisarmTimingStage : uint8_t
+{
+    BODY_WORK,
+    FAST_BG,
+    DISARMED,
+    IMU,
+    EKF_PREDICT,
+    EKF_UPDATE,
+    SLOW_BG,
+    COUNT
+};
+
+struct DisarmTimingPoint
+{
+    uint64_t sum_cycles = 0;
+    uint32_t max_cycles = 0;
+    uint32_t count = 0;
+};
+
+struct DisarmTimingStats
+{
+    static constexpr size_t STAGE_COUNT =
+        static_cast<size_t>(DisarmTimingStage::COUNT);
+
+    DisarmTimingPoint stages[STAGE_COUNT]{};
+
+    uint32_t sample_slot = 0;
+    uint32_t sampled_loops = 0;
+    bool sampling = false;
+
+    inline void BeginLoop(bool disarmed)
+    {
+        sampling = false;
+
+        if (disarmed &&
+            ++sample_slot >= DISARM_TIMING_SAMPLE_EVERY)
+        {
+            sample_slot = 0;
+            sampling = true;
+        }
+    }
+
+    inline uint32_t Mark() const
+    {
+        return sampling
+            ? static_cast<uint32_t>(esp_cpu_get_cycle_count())
+            : 0U;
+    }
+
+    inline void Record(
+        DisarmTimingStage stage,
+        uint32_t begin_cycles)
+    {
+        if (!sampling)
+        {
+            return;
+        }
+
+        const uint32_t elapsed =
+            static_cast<uint32_t>(esp_cpu_get_cycle_count()) -
+            begin_cycles;
+
+        auto& p = stages[static_cast<size_t>(stage)];
+        p.sum_cycles += elapsed;
+        if (elapsed > p.max_cycles)
+        {
+            p.max_cycles = elapsed;
+        }
+        ++p.count;
+    }
+
+    inline void ResetWindow()
+    {
+        for (auto& p : stages)
+        {
+            p = {};
+        }
+        sampled_loops = 0;
+        // Keep sample_slot so sampling phases continue rotating.
+    }
+};
+
 #endif
 
 struct ArmedContext
@@ -373,6 +464,9 @@ class KSSDrone
 #endif
 #if ENABLE_IMU_TIMING_PROFILE
         ImuTimingStats imu_timing_{};
+#endif
+#if ENABLE_DISARM_TIMING_PROFILE
+        DisarmTimingStats disarm_timing_{};
 #endif
 
         /*
@@ -637,6 +731,7 @@ class KSSDrone
         void UpdateMainLoopStats(float raw_dt_s);
         void TryPrintMainLoopStats();
         void TryPrintArmedProfileStats();
+        void TryPrintDisarmTimingStats();
         
     private:
         void ChangeState(const DroneState to_state);
