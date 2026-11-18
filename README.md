@@ -8,7 +8,7 @@
 
 이 프로젝트는 센서 입력, 자세 추정, PID 제어, 상태 머신, 추력 보정, 모터 출력을 하나의 ESP32-S3 비행 제어기에 통합한 개인 제작 드론 펌웨어입니다.
 
-Rev 1.3-b에서는 Rev 1.2의 multi-rate 비행 제어 구조를 유지하면서 전용 ESP-NOW 조종기 대신 RadioMaster 조종기와 ELRS 수신기를 사용하도록 통신 계층을 변경했습니다. CRSF RC 채널 수신, 명령 반복 전송, 통신 timeout, 스위치 edge 검출, 배터리 및 비행 모드 telemetry를 실제 제어 파이프라인에 통합했습니다.
+Rev 1.3-b에서는 Rev 1.2의 multi-rate 비행 제어 구조를 유지하면서 전용 ESP-NOW 조종기 대신 RadioMaster 조종기와 ELRS 수신기를 사용하도록 통신 계층을 변경했습니다. CRSF RC 채널 수신, 명령 반복 전송, 통신 timeout 및 스위치 edge 검출을 실제 제어 파이프라인에 통합했습니다. 배터리·비행 모드 telemetry 송신 구현은 확장용으로 보존하되 현재 `test` 설정에서는 기본 비활성화합니다.
 
 ## 현재 상태
 
@@ -164,8 +164,8 @@ SB의 MID와 HIGH는 동일한 소프트 랜딩 활성 상태로 처리하므로
 - 새 명령을 동일한 `cmd_seq`와 `cmd_flags`로 5회 반복 전송
 - FC는 `cmd_seq`로 동일 명령의 반복 frame을 한 번만 실행
 - Battery Sensor와 Flight Mode TX 구현을 보존하며 현재 기본 OFF (활성화 시 기존 주기 사용)
-- Telemetry 송신 실패는 비행 제어 상태를 변경하지 않음
-- 필터링된 배터리 전압과 배터리 상태를 telemetry에 반영
+- Telemetry 활성화 시 송신 실패는 비행 제어 상태를 변경하지 않음
+- 필터링된 배터리 전압과 상태는 내부에서 유지하고, Telemetry 활성화 시 송신 데이터에도 반영
 
 ### 비행 제어 유지 및 보완
 
@@ -228,7 +228,7 @@ SB의 MID와 HIGH는 동일한 소프트 랜딩 활성 상태로 처리하므로
 | ELRS/CRSF | 약 1,850–1,870 Hz |
 
 - CRSF 전환 후 약 30 Hz, 약 1.6%의 추가 처리 비용이 확인되었습니다.
-- 목표 2 kHz 대비 현재 평균 loop time은 약 535–541 μs입니다.
+- 당시 목표 2 kHz 대비 평균 loop time은 약 535–541 μs였습니다.
 - 통신 변경 자체의 영향은 작으며, 2 kHz 미달의 주원인은 ESP32-S3에서 센서 처리, 추정, 제어, 상태 머신과 통신을 함께 수행하는 전체 연산 부하입니다.
 - 이 수치는 초기 테스트 조건의 참고값이며, 최신 `test` 측정 기준은 위 표에 별도로 기록합니다.
 
@@ -293,7 +293,7 @@ Rev1.3-b는 ESP32-S3 기반 Rev1.x의 현재 안정화 지점입니다. 다음 �
 
 The firmware integrates sensor acquisition, attitude estimation, PID control, a flight-state machine, thrust compensation, and motor output on a single ESP32-S3 flight controller.
 
-Rev 1.3-b retains the multi-rate control architecture introduced in Rev 1.2 while migrating the control link to a RadioMaster transmitter and ELRS receiver. It integrates CRSF RC input, repeated command delivery, communication timeout handling, switch-edge detection, and battery/flight-mode telemetry into the flight-control pipeline.
+Rev 1.3-b retains the multi-rate control architecture introduced in Rev 1.2 while migrating the control link to a RadioMaster transmitter and ELRS receiver. It integrates CRSF RC input, repeated command delivery, communication timeout handling, and switch-edge detection. Battery/flight-mode telemetry TX remains implemented for future use but is disabled by default in the current `test` configuration.
 
 ## Current Status
 
@@ -449,8 +449,8 @@ After a soft landing, the FC may be DISARMED while SE remains physically HIGH. R
 - Repeats each new command five times with the same `cmd_seq` and `cmd_flags`
 - The FC executes repeated frames only once by de-duplicating `cmd_seq`
 - Retains Battery Sensor / Flight Mode telemetry TX for future use; default OFF
-- Telemetry failures do not alter the flight state
-- Reports filtered battery voltage and battery state through telemetry
+- When telemetry TX is enabled, transmission failures do not alter the flight state
+- Maintains filtered battery data locally and reports it over CRSF only when telemetry TX is enabled
 
 ## ARMED Pipeline
 
@@ -491,7 +491,7 @@ In the final two single-flight logs, `sch_miss` decreased from ~1,163/s to ~941/
 | ELRS/CRSF | Approximately 1,850–1,870 Hz |
 
 - The CRSF migration reduced the measured main-loop rate by roughly 30 Hz, or about 1.6%.
-- The current mean loop time is approximately 535–541 μs against the 500 μs target.
+- The mean loop time in those earlier tests was approximately 535–541 μs against the 500 μs target.
 - The control-link overhead is small; the main limitation is the total ESP32-S3 workload from sensing, estimation, control, state handling, and communication.
 - These are historical results from earlier test conditions; the updated `test` measurement is shown above.
 
