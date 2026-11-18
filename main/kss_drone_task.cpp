@@ -128,6 +128,9 @@ void KSSDrone::MainLoop()
                 ? this->armed_fixed_slot_ : 0xFFFFU;
         bool this_slow_bg = false;
 #if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        uint32_t this_bg_elapsed_us = 0U;
+        uint32_t this_pre_bg_us = 0U;
+        int64_t this_bg_slack_us = 0;
         const int64_t fast_bg_begin_us = esp_timer_get_time();
 #endif
         ret = this->FastBackgroundJobs(dt);
@@ -238,11 +241,25 @@ void KSSDrone::MainLoop()
 #if ENABLE_DISARM_TIMING_PROFILE
             const uint32_t disarm_slow_bg_begin = this->disarm_timing_.Mark();
 #endif
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+            this->armed_bg_job_mask_ = 0U;
+            this->armed_bg_forced_mask_ = 0U;
+            const int64_t bg_begin_us = esp_timer_get_time();
+            this_pre_bg_us = static_cast<uint32_t>(
+                bg_begin_us - loop_start_us);
+#if MAIN_LOOP_RATE_HZ > 1000
+            this_bg_slack_us = next_loop_us - bg_begin_us;
+#endif
+#endif
 #if MAIN_LOOP_RATE_HZ > 1000
             ret = this->ProcessSlowBackground(this->slow_bg_dt_accum_,
                                               next_loop_us);
 #else
             ret = this->ProcessSlowBackground(this->slow_bg_dt_accum_, 0);
+#endif
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+            this_bg_elapsed_us = static_cast<uint32_t>(
+                esp_timer_get_time() - bg_begin_us);
 #endif
 #if ENABLE_DISARM_TIMING_PROFILE
             this->disarm_timing_.Record(DisarmTimingStage::SLOW_BG,
@@ -303,6 +320,13 @@ void KSSDrone::MainLoop()
                 static_cast<uint32_t>(fast_bg_end_us - fast_bg_begin_us),
                 static_cast<uint32_t>(armed_end_us - fast_bg_end_us),
                 static_cast<uint32_t>(pre_wait_us - armed_end_us));
+
+            this->armed_bg_probe_active_.Observe(
+                this_slow_bg,
+                this_slow_bg ? this->armed_bg_job_mask_ : 0U,
+                this_slow_bg ? this->armed_bg_forced_mask_ : 0U,
+                this_slow_bg ? this_pre_bg_us : this_work_us,
+                this_work_us, this_bg_elapsed_us, this_bg_slack_us);
         }
 #endif
 #if MAIN_LOOP_RATE_HZ > 1000
