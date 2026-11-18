@@ -397,6 +397,28 @@ void KSSDrone::TryPrintMainLoopStats()
             static_cast<unsigned long>(bg.led_max_gap_us / 1000U));
     }
 #endif
+    // Attribution follows the previous loop. 'log=1' marks the 1Hz
+    // KSS statistics print within that iteration; other logs aren't tagged.
+    const auto& gap = this->loop_gap_causes_;
+    ESP_LOGI(TAG,
+        "GAP_CAUSE idle_max=%luus normal_max=%luus guard_max=%luus "
+        "over2(i/n)=%lu/%lu idle(n/guard)=%lu/%lu "
+        "peak=%luus kind=%u slot=%u work=%luus slowbg=%u log=%u",
+        static_cast<unsigned long>(gap.max_idle.gap_us),
+        static_cast<unsigned long>(gap.max_normal.gap_us),
+        static_cast<unsigned long>(gap.max_guard.gap_us),
+        static_cast<unsigned long>(gap.over_2ms_idle),
+        static_cast<unsigned long>(gap.over_2ms_normal),
+        static_cast<unsigned long>(gap.idle_events),
+        static_cast<unsigned long>(gap.guard_events),
+        static_cast<unsigned long>(gap.max_all.gap_us),
+        static_cast<unsigned>(gap.max_all.wait),
+        static_cast<unsigned>(gap.max_all.slot),
+        static_cast<unsigned long>(gap.max_all.work_us),
+        static_cast<unsigned>(gap.max_all.slow_bg),
+        static_cast<unsigned>(gap.max_all.main_log));
+
+    this->loop_gap_causes_.Reset();
     this->bg_schedule_stats_.Reset();
     this->armed_fixed_deadline_miss_ = 0U;
     this->armed_fixed_max_late_us_ = 0U;
