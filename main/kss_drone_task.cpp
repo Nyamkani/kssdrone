@@ -43,6 +43,15 @@ void KSSDrone::MainLoop()
     uint32_t armed_overrun_score = 0;
     float armed_guard_elapsed_dt = 0.0f;
 
+    // Attribution describes the previous iteration, not the current one.
+    using WaitCause = MainLoopGapCauseStats::WaitCause;
+    bool has_previous_loop = false;
+    WaitCause previous_wait = WaitCause::NORMAL;
+    uint16_t previous_slot = 0xFFFFU;
+    uint32_t previous_work_us = 0U;
+    bool previous_slow_bg = false;
+    bool previous_main_log = false;
+
 #if MAIN_LOOP_RATE_HZ <= 1000
     const TickType_t period = pdMS_TO_TICKS(1);
     TickType_t last_wake_time = xTaskGetTickCount();
@@ -68,6 +77,20 @@ void KSSDrone::MainLoop()
         next_loop_us += MAIN_LOOP_PERIOD_US;
 #endif
 
+#if ENABLE_DRONE_MAIN_STATS_LOG
+        if (has_previous_loop)
+        {
+            this->loop_gap_causes_.Observe(
+                raw_dt, previous_wait, previous_slot, previous_work_us,
+                previous_slow_bg, previous_main_log);
+        }
+        // TryPrintMainLoopStats() prints/reset counters on the same iteration.
+        // Tag that print to the CURRENT work item; it can affect the NEXT gap.
+        const bool this_loop_main_log =
+            (this->loop_stats_.elapsed_s + raw_dt) >= 1.0f;
+#else
+        const bool this_loop_main_log = false;
+#endif
         this->UpdateMainLoopStats(raw_dt);
         this->TryPrintMainLoopStats();
         this->TryPrintArmedProfileStats();
@@ -91,6 +114,11 @@ void KSSDrone::MainLoop()
 #if ENABLE_DISARM_TIMING_PROFILE
         const uint32_t disarm_fast_bg_begin = this->disarm_timing_.Mark();
 #endif
+        // Slot is captured BEFORE Armed() increments the phase index.
+        const uint16_t this_slot =
+            this->state_ == DroneState::ARMED
+                ? this->armed_fixed_slot_ : 0xFFFFU;
+        bool this_slow_bg = false;
         ret = this->FastBackgroundJobs(dt);
 #if ENABLE_DISARM_TIMING_PROFILE
         this->disarm_timing_.Record(DisarmTimingStage::FAST_BG,
@@ -182,6 +210,7 @@ void KSSDrone::MainLoop()
         this->slow_bg_dt_accum_ += dt;
         if (this->slow_bg_dt_accum_ >= BACKGROUND_SLOW_JOB_TIME)
         {
+            this_slow_bg = true;
 #if ENABLE_ARMED_TIMING_PROFILE
             const uint32_t prof_slow_bg = this->armed_prof_.Mark();
 #endif
@@ -238,6 +267,11 @@ void KSSDrone::MainLoop()
             ++this->disarm_timing_.sampled_loops;
         }
 #endif
+        // Work timing stops before WDT guard/yield and before deadline wait.
+        // Thus a 2ms gap with 200us work is not a 2ms function execution.
+        const int64_t pre_wait_us = esp_timer_get_time();
+        const uint32_t this_work_us =
+            static_cast<uint32_t>(pre_wait_us - loop_start_us);
 #if MAIN_LOOP_RATE_HZ > 1000
         if (this->state_ == DroneState::ARMED)
         {
@@ -253,6 +287,7 @@ void KSSDrone::MainLoop()
         }
 #endif
         bool forced_idle_delay = false;
+        WaitCause this_wait = WaitCause::NORMAL;
 
         if (this->state_ == DroneState::ARMED)
         {
@@ -277,6 +312,7 @@ void KSSDrone::MainLoop()
             if (score_guard || time_guard)
             {
                 this->loop_stats_.wdt_guard++;
+                this_wait = WaitCause::OVERRUN_GUARD;
 
                 /*
                  * deadline을 계속 놓치는 경우 강제로 block.
@@ -328,6 +364,7 @@ void KSSDrone::MainLoop()
             if (force_idle_elapsed_dt >= MAIN_LOOP_FORCE_IDLE_INTERVAL_SEC)
             {
                 this->loop_stats_.wdt_guard++;
+                this_wait = WaitCause::PERIODIC_IDLE;
 
                 vTaskDelay(1);
 
@@ -392,8 +429,13 @@ void KSSDrone::MainLoop()
         }
 #endif
 
-        const int64_t work_time_us = esp_timer_get_time() - loop_start_us;
-        (void)work_time_us;
+        // This iteration's flags describe the NEXT start-to-start interval.
+        has_previous_loop = true;
+        previous_wait = this_wait;
+        previous_slot = this_slot;
+        previous_work_us = this_work_us;
+        previous_slow_bg = this_slow_bg;
+        previous_main_log = this_loop_main_log;
     }
 }
 
