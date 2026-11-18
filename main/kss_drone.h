@@ -766,6 +766,74 @@ class KSSDrone
         int64_t armed_slot_dump_last_us_ = 0;
         bool armed_slot_dump_pending_ = false;
         bool armed_slot_capture_ = false;
+        // Flight-wide A/B probe: does spare slack admit BG jobs that
+        // make a 500us loop overrun? No I/O or allocations in the hot path.
+        struct ArmedBgAdmissionProbe
+        {
+            enum : uint8_t
+            {
+                NO_CALL = 0U,
+                CALL_NO_JOB = 1U,
+                ADMITTED = 2U,
+                FORCED = 3U,
+                CATEGORY_COUNT = 4U,
+                BATTERY = 1U,
+                TELEMETRY = 2U,
+                LED = 4U
+            };
+            struct Case
+            {
+                uint32_t loops = 0U;
+                uint64_t work_sum_us = 0U;
+                uint32_t work_max_us = 0U;
+                uint32_t bg_max_us = 0U;
+                uint32_t work_over_500 = 0U;
+                uint32_t tipped_over_500 = 0U;
+                uint32_t bg_exceeded_slack = 0U;
+            };
+            Case cases[CATEGORY_COUNT]{};
+            uint32_t job_runs[3]{};
+            uint32_t forced_runs[3]{};
+
+            void Observe(const bool called, const uint8_t jobs,
+                         const uint8_t forced, const uint32_t pre_bg_us,
+                         const uint32_t work_us, const uint32_t bg_us,
+                         const int64_t slack_us)
+            {
+                const uint8_t category = !called ? NO_CALL
+                    : jobs == 0U ? CALL_NO_JOB
+                    : forced != 0U ? FORCED : ADMITTED;
+                Case& c = cases[category];
+                ++c.loops;
+                c.work_sum_us += work_us;
+                c.work_max_us = std::max(c.work_max_us, work_us);
+                c.bg_max_us = std::max(c.bg_max_us, bg_us);
+                if (work_us > MAIN_LOOP_PERIOD_US)
+                    ++c.work_over_500;
+                // A core that was on time but became late after slow BG.
+                if (called && pre_bg_us <= MAIN_LOOP_PERIOD_US &&
+                    work_us > MAIN_LOOP_PERIOD_US)
+                    ++c.tipped_over_500;
+                // Enough slack at entry does not guarantee actual job cost.
+                if (called && jobs != 0U && slack_us > 0 &&
+                    static_cast<int64_t>(bg_us) > slack_us)
+                    ++c.bg_exceeded_slack;
+
+                if (jobs & BATTERY) ++job_runs[0];
+                if (jobs & TELEMETRY) ++job_runs[1];
+                if (jobs & LED) ++job_runs[2];
+                if (forced & BATTERY) ++forced_runs[0];
+                if (forced & TELEMETRY) ++forced_runs[1];
+                if (forced & LED) ++forced_runs[2];
+            }
+        };
+        ArmedBgAdmissionProbe armed_bg_probe_active_{};
+        ArmedBgAdmissionProbe armed_bg_probe_finished_{};
+        uint8_t armed_bg_job_mask_ = 0U;
+        uint8_t armed_bg_forced_mask_ = 0U;
+        uint8_t armed_bg_dump_index_ = 0U;
+        int64_t armed_bg_dump_last_us_ = 0;
+        bool armed_bg_dump_pending_ = false;
 #endif
 
         //task log
