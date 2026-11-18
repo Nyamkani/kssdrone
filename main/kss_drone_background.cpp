@@ -7,8 +7,8 @@ esp_err_t KSSDrone::FastBackgroundJobs(const float dt)
     (void)dt;
 
     /*
-     * 명령 cache / edge event는 안전 관련이므로 일단 1kHz 유지.
-     * DISARM, SOFT_LANDING, EMERGENCY 계열 반응성을 유지하기 위함.
+     * 명령 cache / edge event는 매 MainLoop(목표 2kHz)에서 확인한다.
+     * ELRS 수신 snapshot 반영 및 DISARM / SOFT_LANDING / EMERGENCY 대응을 유지한다.
      */
     this->UpdateCommandCache();
     this->HandleCommandEvents();
@@ -24,7 +24,9 @@ esp_err_t KSSDrone::ProcessSlowBackground(const float dt,
                                           const int64_t deadline_us)
 {
     this->battery_check_dt_ += dt;
+#if ENABLE_CRSF_TELEMETRY
     this->telemetry_send_dt_ += dt;
+#endif
     this->led_update_dt_ += dt;
 
 #if ENABLE_CMD_DETAIL_LOG
@@ -83,7 +85,7 @@ esp_err_t KSSDrone::ProcessSlowBackground(const float dt,
                 std::max(this->bg_schedule_stats_.battery_max_gap_us,
                          static_cast<uint32_t>(actual_dt * 1000000.0f));
 
-            // Avoid stacking telemetry or LED onto an already long slot.
+            // Avoid stacking another slow job onto an already long slot.
             if (budgeted)
             {
                 return ESP_OK;
@@ -95,6 +97,9 @@ esp_err_t KSSDrone::ProcessSlowBackground(const float dt,
         }
     }
 
+    // Optional telemetry TX is not part of the mandatory ELRS RX path.
+    // When disabled, do not consume budget or defer LED via an early return.
+#if ENABLE_CRSF_TELEMETRY
     if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_S)
     {
         const bool forced = budgeted &&
@@ -131,6 +136,7 @@ esp_err_t KSSDrone::ProcessSlowBackground(const float dt,
             ++this->bg_schedule_stats_.telemetry_deferred;
         }
     }
+#endif
 
     if (this->led_update_dt_ >= BACKGROUND_SLOW_JOB_TIME)
     {
@@ -279,7 +285,7 @@ void KSSDrone::UpdateCommandCache()
     if (!new_command)
     {
         /*
-         * 같은 CRSF snapshot을 1kHz에서 다시 읽은 정상 상황.
+         * 같은 CRSF snapshot을 다음 MainLoop에서 다시 읽은 정상 상황.
          */
         return;
     }
