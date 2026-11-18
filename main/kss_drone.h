@@ -114,6 +114,7 @@ Landing -> Disarmed
 
 //task log
 #define ENABLE_DRONE_MAIN_STATS_LOG  1
+#define ENABLE_ARMED_SLOT_TIMING_PROFILE 1 // S0-S39 per-flight RAM diagnostics
 #define ENABLE_CMD_DETAIL_LOG 0
 #define ENABLE_RMT_OUTPUT_PROFILE  0  // 1: Enable, 0: Disable
 #define ENABLE_MOTOR_OUTPUT_COUNT 1
@@ -715,6 +716,57 @@ class KSSDrone
         uint32_t report_serial_ = 0U;
         int64_t deferred_flush_us_ = 0;
         bool was_flight_ = false;
+
+        // ARMED phase diagnostic; one aggregate record per phase for the
+        // entire flight, independent of the 48-second 1Hz report ring.
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        struct ArmedSlotTiming
+        {
+            uint32_t count = 0U;
+            uint64_t sum_work_us = 0U;
+            uint32_t min_work_us = UINT32_MAX;
+            uint32_t max_work_us = 0U;
+            uint32_t max_pre_us = 0U;
+            uint32_t max_fast_bg_us = 0U;
+            uint32_t max_armed_us = 0U;
+            uint32_t max_slow_bg_us = 0U;
+            uint32_t work_over_budget = 0U;
+            uint32_t max_normal_gap_us = 0U;
+            uint32_t normal_gap_over_budget = 0U;
+            uint32_t normal_gap_over_1000us = 0U;
+
+            void ObserveWork(const uint32_t work, const uint32_t pre,
+                             const uint32_t fast_bg, const uint32_t armed,
+                             const uint32_t slow_bg)
+            {
+                ++count;
+                sum_work_us += work;
+                min_work_us = std::min(min_work_us, work);
+                max_work_us = std::max(max_work_us, work);
+                max_pre_us = std::max(max_pre_us, pre);
+                max_fast_bg_us = std::max(max_fast_bg_us, fast_bg);
+                max_armed_us = std::max(max_armed_us, armed);
+                max_slow_bg_us = std::max(max_slow_bg_us, slow_bg);
+                if (work > MAIN_LOOP_PERIOD_US) ++work_over_budget;
+            }
+
+            void ObserveNormalGap(const uint32_t gap_us)
+            {
+                max_normal_gap_us = std::max(max_normal_gap_us, gap_us);
+                if (gap_us > MAIN_LOOP_PERIOD_US)
+                    ++normal_gap_over_budget;
+                if (gap_us > 1000U)
+                    ++normal_gap_over_1000us;
+            }
+        };
+        ArmedSlotTiming armed_slot_active_[KssArmedSchedule::kSlotCount]{};
+        ArmedSlotTiming armed_slot_finished_[KssArmedSchedule::kSlotCount]{};
+        uint16_t armed_slot_dump_index_ = 0U;
+        uint32_t armed_slot_dump_flight_ = 0U;
+        int64_t armed_slot_dump_last_us_ = 0;
+        bool armed_slot_dump_pending_ = false;
+        bool armed_slot_capture_ = false;
+#endif
 
         //task log
         // loop timing statistics
