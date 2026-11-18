@@ -450,9 +450,13 @@ bool KSSDrone::TryPrintMainLoopStats()
 #if ENABLE_ARMED_SLOT_TIMING_PROFILE
         for (auto& slot : this->armed_slot_active_)
             slot = {};
+        this->armed_bg_probe_active_ = {};
+        this->armed_bg_job_mask_ = 0U;
+        this->armed_bg_forced_mask_ = 0U;
         this->armed_slot_capture_ = true;
-        // A new flight supersedes any unfinished old slot dump.
+        // A new flight supersedes any unfinished old diagnostic dump.
         this->armed_slot_dump_pending_ = false;
+        this->armed_bg_dump_pending_ = false;
 #endif
     }
 
@@ -463,6 +467,10 @@ bool KSSDrone::TryPrintMainLoopStats()
         this->armed_slot_capture_ = false;
         for (uint16_t i = 0; i < KssArmedSchedule::kSlotCount; ++i)
             this->armed_slot_finished_[i] = this->armed_slot_active_[i];
+        this->armed_bg_probe_finished_ = this->armed_bg_probe_active_;
+        this->armed_bg_dump_index_ = 0U;
+        this->armed_bg_dump_last_us_ = 0;
+        this->armed_bg_dump_pending_ = true;
         this->armed_slot_dump_index_ = 0U;
         this->armed_slot_dump_last_us_ = 0;
         this->armed_slot_dump_pending_ = true;
@@ -583,6 +591,58 @@ bool KSSDrone::TryPrintMainLoopStats()
             }
             if (this->armed_slot_dump_index_ >= KssArmedSchedule::kSlotCount)
                 this->armed_slot_dump_pending_ = false;
+        }
+    }
+#endif
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+    // One diagnostic line per 50ms, AFTER S0-S39, only in DISARMED.
+    // Print mutually exclusive cases with normalized per-case counts.
+    if (this->state_ == DroneState::DISARMED && !printed &&
+        !this->armed_slot_dump_pending_ && this->armed_bg_dump_pending_)
+    {
+        const int64_t now_us = esp_timer_get_time();
+        if (this->armed_bg_dump_last_us_ == 0 ||
+            now_us - this->armed_bg_dump_last_us_ >= 50000LL)
+        {
+            this->armed_bg_dump_last_us_ = now_us;
+            const uint8_t index = this->armed_bg_dump_index_;
+            if (index < ArmedBgAdmissionProbe::CATEGORY_COUNT)
+            {
+                const auto& c = this->armed_bg_probe_finished_.cases[index];
+                const uint32_t avg_us = c.loops
+                    ? static_cast<uint32_t>(c.work_sum_us / c.loops) : 0U;
+                ESP_LOGI(TAG,
+                    "BG_CASE flight=%lu kind=%u loops=%lu "
+                    "work_avg_max=%lu/%luus bg_max=%luus "
+                    "over500=%lu tipped=%lu bg_exceeded_slack=%lu",
+                    static_cast<unsigned long>(this->armed_slot_dump_flight_),
+                    static_cast<unsigned>(index),
+                    static_cast<unsigned long>(c.loops),
+                    static_cast<unsigned long>(avg_us),
+                    static_cast<unsigned long>(c.work_max_us),
+                    static_cast<unsigned long>(c.bg_max_us),
+                    static_cast<unsigned long>(c.work_over_500),
+                    static_cast<unsigned long>(c.tipped_over_500),
+                    static_cast<unsigned long>(c.bg_exceeded_slack));
+            }
+            else
+            {
+                const auto& p = this->armed_bg_probe_finished_;
+                ESP_LOGI(TAG,
+                    "BG_JOBS flight=%lu run(b/t/l)=%lu/%lu/%lu "
+                    "forced(b/t/l)=%lu/%lu/%lu",
+                    static_cast<unsigned long>(this->armed_slot_dump_flight_),
+                    static_cast<unsigned long>(p.job_runs[0]),
+                    static_cast<unsigned long>(p.job_runs[1]),
+                    static_cast<unsigned long>(p.job_runs[2]),
+                    static_cast<unsigned long>(p.forced_runs[0]),
+                    static_cast<unsigned long>(p.forced_runs[1]),
+                    static_cast<unsigned long>(p.forced_runs[2]));
+            }
+            ++this->armed_bg_dump_index_;
+            if (this->armed_bg_dump_index_ >
+                ArmedBgAdmissionProbe::CATEGORY_COUNT)
+                this->armed_bg_dump_pending_ = false;
         }
     }
 #endif
