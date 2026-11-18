@@ -233,6 +233,12 @@ struct ImuTimingStats
     uint32_t samples = 0;
     uint64_t sum_cycles = 0;
     uint32_t max_cycles = 0;
+    uint64_t raw_sum_cycles = 0;
+    uint32_t raw_max_cycles = 0;
+    uint64_t parse_sum_cycles = 0;
+    uint32_t parse_max_cycles = 0;
+    uint64_t remainder_sum_cycles = 0;
+    uint32_t remainder_max_cycles = 0;
 };
 #endif
 
@@ -600,7 +606,8 @@ class KSSDrone
 
         esp_err_t ArmedFailsafeFast(float dt);
         esp_err_t ArmedCommandMedium(float dt, ArmedContext& ctx);
-        esp_err_t ArmedImuFast(float dt, ArmedContext& ctx);
+        esp_err_t ArmedImuFast(float dt, ArmedContext& ctx,
+                               IMUReadTimingSample* timing = nullptr);
         esp_err_t ArmedEstimatorMedium(float dt, ArmedContext& ctx);
         void ArmedAirborneSlow(float dt, ArmedContext& ctx);
         void ArmedSlowCompUpdate(float dt, ArmedContext& ctx);
