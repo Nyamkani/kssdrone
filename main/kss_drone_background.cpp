@@ -2,24 +2,13 @@
 
 static const char* TAG = "kss_drone";
 
-esp_err_t KSSDrone::BackgroundJobs(const float dt)
-{
-    esp_err_t ret = this->FastBackgroundJobs(dt);
-    if (ret != ESP_OK)
-    {
-        return ret;
-    }
-
-    return this->SlowBackgroundJobs(dt);
-}
-
 esp_err_t KSSDrone::FastBackgroundJobs(const float dt)
 {
     (void)dt;
 
     /*
-     * 명령 cache / edge event는 안전 관련이므로 일단 1kHz 유지.
-     * DISARM, SOFT_LANDING, EMERGENCY 계열 반응성을 유지하기 위함.
+     * 명령 cache / edge event는 매 MainLoop(목표 2kHz)에서 확인한다.
+     * ELRS 수신 snapshot 반영 및 DISARM / SOFT_LANDING / EMERGENCY 대응을 유지한다.
      */
     this->UpdateCommandCache();
     this->HandleCommandEvents();
@@ -27,103 +16,254 @@ esp_err_t KSSDrone::FastBackgroundJobs(const float dt)
     return ESP_OK;
 }
 
-esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
+// Called on the existing 10ms slow-background cadence, after flight control.
+// All per-job elapsed time accumulators advance even if the job is deferred.
+// ARMED/LANDING admission uses the remaining time before the next 500us slot;
+// other states retain unconditional background service.
+esp_err_t KSSDrone::ProcessSlowBackground(const float dt,
+                                          const int64_t deadline_us)
 {
     this->battery_check_dt_ += dt;
-
-    if (this->battery_check_dt_ >= CHECK_BATTERY_PERIOD_S)
-    {
-        while (this->battery_check_dt_ >=
-            CHECK_BATTERY_PERIOD_S)
-        {
-            this->battery_check_dt_ -=
-                CHECK_BATTERY_PERIOD_S;
-        }
-
-        const esp_err_t ret =
-            this->battery_monitor_.Update(
-                CHECK_BATTERY_PERIOD_S);
-
-        if (ret != ESP_OK)
-        {
-            return ret;
-        }
-
-        this->tpkt_.battery_voltage =
-            this->battery_monitor_.GetVoltage();
-
-        this->tpkt_.battery_percent =
-            this->battery_monitor_.GetPercent();
-    }
-    // const int64_t rx_dt_us =
-    //     esp_timer_get_time() - this->esp_now_interface_.GetLastRxTimeUs();
-
-    // const int64_t rx_dt_us =
-    //     esp_timer_get_time() - this->crsf_receiver_.GetLastRxTimeUs();
-
+#if ENABLE_CRSF_TELEMETRY
     this->telemetry_send_dt_ += dt;
+#endif
+    this->led_update_dt_ += dt;
 
-    // if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_MS && rx_dt_us > 2000)
-    if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_S)
-    {
-        while (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_S)
-        {
-            this->telemetry_send_dt_ -= CHECK_SEND_TELEMETRY_S;
-        }
-
-        this->tpkt_.mode = static_cast<uint8_t>(this->drone_mode_);
-        this->tpkt_.state = static_cast<uint8_t>(this->state_);
-
-        const TelemetryPacket send_pkt_ = this->tpkt_;
-
-        // esp_err_t ret = this->esp_now_interface_.SendTelemetry(send_pkt_);
-        esp_err_t ret = this->crsf_receiver_.SendTelemetry(send_pkt_);
-
-        if (ret != ESP_OK)
-        {
-            ESP_LOGW(TAG,
-                    "CRSF telemetry send failed: %s",
-                    esp_err_to_name(ret));
-        }
-    }
-
-    if (this->state_ == DroneState::ARMED || this->state_ == DroneState::LANDING)
+#if ENABLE_CMD_DETAIL_LOG
+    if (this->state_ == DroneState::ARMED ||
+        this->state_ == DroneState::LANDING)
     {
         this->log_send_dt_ += dt;
-        if (this->log_send_dt_ >= CHECK_SEND_LOG_S)
+    }
+    else
+    {
+        this->log_send_dt_ = 0.0f;
+    }
+#endif
+
+#if MAIN_LOOP_RATE_HZ > 1000
+    const bool budgeted =
+        this->state_ == DroneState::ARMED ||
+        this->state_ == DroneState::LANDING;
+#else
+    (void)deadline_us;
+    const bool budgeted = false;
+#endif
+
+    const auto fits = [budgeted, deadline_us](const int64_t budget_us)
+    {
+        return !budgeted ||
+            deadline_us - esp_timer_get_time() >= budget_us;
+    };
+
+    // Battery remains 8 consecutive ADC samples + block average + LPF.
+    // Its 400-600us cost rarely fits a 500us flight-control slot, so it
+    // has a bounded deferral: force service by ~70ms of accumulated time.
+    if (this->battery_check_dt_ >= CHECK_BATTERY_PERIOD_S)
+    {
+        const bool forced = budgeted &&
+            this->battery_check_dt_ >= BG_BATTERY_MAX_GAP_S;
+        if (forced || fits(BG_BATTERY_BUDGET_US))
         {
-            while (this->log_send_dt_ >= CHECK_SEND_LOG_S)
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+            if (budgeted)
             {
-                this->log_send_dt_ -= CHECK_SEND_LOG_S;
+                this->armed_bg_job_mask_ |= ArmedBgAdmissionProbe::BATTERY;
+                if (forced)
+                    this->armed_bg_forced_mask_ |= ArmedBgAdmissionProbe::BATTERY;
             }
+#endif
+            const float actual_dt = this->battery_check_dt_;
+            const esp_err_t ret = this->BatteryBackgroundJob(actual_dt);
+            if (ret != ESP_OK)
+            {
+                return ret;
+            }
+            this->battery_check_dt_ = 0.0f;
+            this->bg_schedule_stats_.battery_forced += forced ? 1U : 0U;
+            this->bg_schedule_stats_.battery_max_gap_us =
+                std::max(this->bg_schedule_stats_.battery_max_gap_us,
+                         static_cast<uint32_t>(actual_dt * 1000000.0f));
 
-
-            #if ENABLE_CMD_DETAIL_LOG
-
-                ESP_LOGI(TAG,
-                        "yaw=%.3f thr_cmd=%.3f thr_used=%.3f gyro_z=%.3f state=%u",
-                        this->log_.yaw_out,
-                        this->log_.throttle_cmd,
-                        this->log_.throttle_used,
-                        this->log_.gyro_z_rad_s,
-                        static_cast<unsigned>(this->log_.state));
-
-                // ESP_LOGI(TAG,
-                //         "dt=%.4f ramp_up=%.3f takeoff_up=%.3f ramp_down=%.3f",
-                //         this->log_.dt,
-                //         THROTTLE_RAMP_UP_RATE,
-                //         TAKEOFF_THROTTLE_RAMP_UP_RATE,
-                //         THROTTLE_RAMP_DOWN_RATE);
-
-            #endif
-
-
+            // Avoid stacking another slow job onto an already long slot.
+            if (budgeted)
+            {
+                return ESP_OK;
+            }
+        }
+        else
+        {
+            ++this->bg_schedule_stats_.battery_deferred;
         }
     }
 
-    this->led_controller_.Update(dt);
+    // Optional telemetry TX is not part of the mandatory ELRS RX path.
+    // When disabled, do not consume budget or defer LED via an early return.
+#if ENABLE_CRSF_TELEMETRY
+    if (this->telemetry_send_dt_ >= CHECK_SEND_TELEMETRY_S)
+    {
+        const bool forced = budgeted &&
+            this->telemetry_send_dt_ >= BG_TELEMETRY_MAX_GAP_S;
+        if (forced || fits(BG_TELEMETRY_BUDGET_US))
+        {
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+            if (budgeted)
+            {
+                this->armed_bg_job_mask_ |= ArmedBgAdmissionProbe::TELEMETRY;
+                if (forced)
+                    this->armed_bg_forced_mask_ |= ArmedBgAdmissionProbe::TELEMETRY;
+            }
+#endif
+            const float actual_dt = this->telemetry_send_dt_;
+            const esp_err_t ret = this->TelemetryBackgroundJob();
+            if (ret != ESP_OK)
+            {
+                return ret;
+            }
+            this->telemetry_send_dt_ = 0.0f;
+            this->bg_schedule_stats_.telemetry_forced += forced ? 1U : 0U;
+            this->bg_schedule_stats_.telemetry_max_gap_us =
+                std::max(this->bg_schedule_stats_.telemetry_max_gap_us,
+                         static_cast<uint32_t>(actual_dt * 1000000.0f));
+
+            if (budgeted)
+            {
+                return ESP_OK;
+            }
+        }
+        else
+        {
+            ++this->bg_schedule_stats_.telemetry_deferred;
+        }
+    }
+#endif
+
+    if (this->led_update_dt_ >= BACKGROUND_SLOW_JOB_TIME)
+    {
+        const bool forced = budgeted &&
+            this->led_update_dt_ >= BG_LED_MAX_GAP_S;
+        if (forced || fits(BG_LED_BUDGET_US))
+        {
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+            if (budgeted)
+            {
+                this->armed_bg_job_mask_ |= ArmedBgAdmissionProbe::LED;
+                if (forced)
+                    this->armed_bg_forced_mask_ |= ArmedBgAdmissionProbe::LED;
+            }
+#endif
+            const float actual_dt = this->led_update_dt_;
+            this->LedBackgroundJob(actual_dt);
+            this->led_update_dt_ = 0.0f;
+            this->bg_schedule_stats_.led_forced += forced ? 1U : 0U;
+            this->bg_schedule_stats_.led_max_gap_us =
+                std::max(this->bg_schedule_stats_.led_max_gap_us,
+                         static_cast<uint32_t>(actual_dt * 1000000.0f));
+        }
+        else
+        {
+            ++this->bg_schedule_stats_.led_deferred;
+        }
+    }
+
+#if ENABLE_CMD_DETAIL_LOG
+    if (this->log_send_dt_ >= CHECK_SEND_LOG_S &&
+        (this->state_ == DroneState::ARMED ||
+         this->state_ == DroneState::LANDING))
+    {
+        if (fits(BG_DETAIL_LOG_BUDGET_US) ||
+            this->log_send_dt_ >= BG_DETAIL_LOG_MAX_GAP_S)
+        {
+            this->DetailLogBackgroundJob();
+            this->log_send_dt_ = 0.0f;
+        }
+    }
+#endif
 
     return ESP_OK;
+}
+
+esp_err_t KSSDrone::BatteryBackgroundJob(const float actual_dt)
+{
+#if ENABLE_DISARM_TIMING_PROFILE
+    const bool profile = this->state_ == DroneState::DISARMED;
+    const uint32_t begin = profile
+        ? static_cast<uint32_t>(esp_cpu_get_cycle_count()) : 0U;
+#endif
+    const esp_err_t ret = this->battery_monitor_.Update(actual_dt);
+#if ENABLE_DISARM_TIMING_PROFILE
+    if (profile)
+    {
+        this->disarm_timing_.Record(
+            DisarmTimingStage::BG_BATTERY, begin, true);
+    }
+#endif
+    if (ret != ESP_OK)
+    {
+        return ret;
+    }
+
+    this->tpkt_.battery_voltage = this->battery_monitor_.GetVoltage();
+    this->tpkt_.battery_percent = this->battery_monitor_.GetPercent();
+    return ESP_OK;
+}
+
+esp_err_t KSSDrone::TelemetryBackgroundJob()
+{
+    this->tpkt_.mode = static_cast<uint8_t>(this->drone_mode_);
+    this->tpkt_.state = static_cast<uint8_t>(this->state_);
+    const TelemetryPacket packet = this->tpkt_;
+
+#if ENABLE_DISARM_TIMING_PROFILE
+    const bool profile = this->state_ == DroneState::DISARMED;
+    const uint32_t begin = profile
+        ? static_cast<uint32_t>(esp_cpu_get_cycle_count()) : 0U;
+#endif
+    const esp_err_t ret = this->crsf_receiver_.SendTelemetry(packet);
+#if ENABLE_DISARM_TIMING_PROFILE
+    if (profile)
+    {
+        this->disarm_timing_.Record(
+            DisarmTimingStage::BG_TELEMETRY, begin, true);
+    }
+#endif
+    if (ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "CRSF telemetry send failed: %s",
+                 esp_err_to_name(ret));
+    }
+    // Match previous behavior: telemetry errors are reported, not fatal.
+    return ESP_OK;
+}
+
+void KSSDrone::LedBackgroundJob(const float actual_dt)
+{
+#if ENABLE_DISARM_TIMING_PROFILE
+    const bool profile = this->state_ == DroneState::DISARMED;
+    const uint32_t begin = profile
+        ? static_cast<uint32_t>(esp_cpu_get_cycle_count()) : 0U;
+#endif
+    this->led_controller_.Update(actual_dt);
+#if ENABLE_DISARM_TIMING_PROFILE
+    if (profile)
+    {
+        this->disarm_timing_.Record(
+            DisarmTimingStage::BG_LED, begin, true);
+    }
+#endif
+}
+
+void KSSDrone::DetailLogBackgroundJob()
+{
+#if ENABLE_CMD_DETAIL_LOG
+    ESP_LOGI(TAG,
+             "yaw=%.3f thr_cmd=%.3f thr_used=%.3f gyro_z=%.3f state=%u",
+             this->log_.yaw_out,
+             this->log_.throttle_cmd,
+             this->log_.throttle_used,
+             this->log_.gyro_z_rad_s,
+             static_cast<unsigned>(this->log_.state));
+#endif
 }
 
 void KSSDrone::UpdateCommandCache()
@@ -145,7 +285,7 @@ void KSSDrone::UpdateCommandCache()
     if (!new_command)
     {
         /*
-         * 같은 CRSF snapshot을 1kHz에서 다시 읽은 정상 상황.
+         * 같은 CRSF snapshot을 다음 MainLoop에서 다시 읽은 정상 상황.
          */
         return;
     }

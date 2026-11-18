@@ -41,6 +41,9 @@ void KSSDrone::LoadArmedContextCache(ArmedContext& ctx)
 
 void KSSDrone::ResetArmedRuntime()
 {
+#if ENABLE_IMU_TIMING_PROFILE
+    this->imu_timing_ = {};
+#endif
     this->armed_cmd_valid_ = false;
     this->armed_target_valid_ = false;
     this->armed_imu_valid_ = false;
@@ -68,6 +71,11 @@ void KSSDrone::ResetArmedRuntime()
     this->armed_motor_output_dt_accum_ = ARMED_MOTOR_OUTPUT_PERIOD_SEC;
     this->armed_tilt_safety_dt_accum_ = ARMED_TILT_SAFETY_PERIOD_SEC;
     
+    this->armed_fixed_slot_ = 0U;
+    for (float& elapsed : this->armed_fixed_elapsed_) elapsed = 0.0f;
+    this->armed_fixed_deadline_miss_ = 0U;
+    this->armed_fixed_max_late_us_ = 0U;
+
     this->armed_last_cmd_us_ = 0;
     this->armed_log_dt_accum_ = 0.0f;
 
@@ -122,14 +130,15 @@ esp_err_t KSSDrone::ArmedFailsafeFast(const float dt)
         return ESP_OK;
     }
 
-    // if (this->battery_monitor_.GetState() == BatteryState::CRITICAL)
-    // {
-    //     this->debug_disarm_reason_ = DisarmReason::BATTERY_CRITICAL;
-    //     this->landing_mode_ = LandingMode::FAILSAFE;
-    //     this->ChangeState(DroneState::LANDING);
-    //     ESP_LOGE(TAG, "CRITICAL battery! -> LANDING(FAILSAFE)");
-    //     return ESP_OK;
-    // }
+    // Restore existing battery fail-safe using the latest slow-BG ADC state.
+    if (this->battery_monitor_.GetState() == BatteryState::CRITICAL)
+    {
+        this->debug_disarm_reason_ = DisarmReason::BATTERY_CRITICAL;
+        this->landing_mode_ = LandingMode::FAILSAFE;
+        this->ChangeState(DroneState::LANDING);
+        ESP_LOGE(TAG, "CRITICAL battery! -> LANDING(FAILSAFE)");
+        return ESP_OK;
+    }
 
     if (!this->armed_)
     {
@@ -174,14 +183,7 @@ esp_err_t KSSDrone::ArmedCommandMedium(const float dt, ArmedContext& ctx)
         return ESP_OK;
     }
 
-    float cmd_dt = 0.0f;
-    if (!ConsumePeriodicDt(this->armed_command_dt_accum_,
-                           dt,
-                           ARMED_COMMAND_PERIOD_SEC,
-                           cmd_dt))
-    {
-        return ESP_OK;
-    }
+    const float cmd_dt = dt; // executed only in scheduled command slots
 
     // if (!this->active_cmd_valid_ || this->esp_now_interface_.IsTimeout())
      if (!this->active_cmd_valid_ || this->crsf_receiver_.IsTimeout())
@@ -429,7 +431,8 @@ if (this->drone_mode_ == DroneMode::ANGLE_SELF_LEVEL)
  * EKF는 여기서 하지 않는다.
  */
 
-esp_err_t KSSDrone::ArmedImuFast(const float dt, ArmedContext& ctx)
+esp_err_t KSSDrone::ArmedImuFast(const float dt, ArmedContext& ctx,
+                                 IMUReadTimingSample* timing)
 {
     (void)ctx;
 
@@ -448,7 +451,7 @@ esp_err_t KSSDrone::ArmedImuFast(const float dt, ArmedContext& ctx)
      */
     SharedSnapshotFrame<IMU_PARESED_DATA> imu_frame{};
 
-    esp_err_t ret = this->imu_interface_.GetParsedIMURadsDataWithFrame(imu_frame);
+    esp_err_t ret = this->imu_interface_.GetParsedIMURadsDataWithFrame(imu_frame, timing);
     if (ret != ESP_OK)
     {
         ctx.imu_valid = false;
@@ -528,24 +531,7 @@ esp_err_t KSSDrone::ArmedEstimatorMedium(const float dt, ArmedContext& ctx)
         return ESP_OK;
     }
 
-    float estimator_dt = 0.0f;
-    if (!ConsumePeriodicDt(this->armed_estimator_dt_accum_,
-                           dt,
-                           ARMED_ESTIMATOR_PERIOD_SEC,
-                           estimator_dt))
-    {
-        if (this->armed_state_valid_)
-        {
-            ctx.ekf_input = this->armed_ekf_input_cache_;
-            ctx.ekf_out = this->armed_ekf_out_cache_;
-            ctx.state = this->armed_state_cache_;
-
-            ctx.ekf_valid = this->armed_ekf_valid_;
-            ctx.state_valid = true;
-        }
-
-        return ESP_OK;
-    }
+    const float estimator_dt = dt; // held state loaded in Armed() on other slots
 
     const IMU_PARESED_DATA& imu = ctx.imu;
 
@@ -679,14 +665,7 @@ void KSSDrone::ArmedAirborneSlow(const float dt, ArmedContext& ctx)
         return;
     }
 
-    float airborne_dt = 0.0f;
-    if (!ConsumePeriodicDt(this->armed_airborne_dt_accum_,
-                           dt,
-                           ARMED_AIRBORNE_PERIOD_SEC,
-                           airborne_dt))
-    {
-        return;
-    }
+    const float airborne_dt = dt;
 
     this->UpdateAirborneState(airborne_dt, ctx.target);
 
@@ -710,14 +689,7 @@ void KSSDrone::ArmedSlowCompUpdate(const float dt, ArmedContext& ctx)
         return;
     }
 
-    float slow_dt = 0.0f;
-    if (!ConsumePeriodicDt(this->armed_slow_comp_dt_accum_,
-                           dt,
-                           ARMED_SOFT_COMP_PERIOD_SEC,
-                           slow_dt))
-    {
-        return;
-    }
+    const float slow_dt = dt;
 
     this->UpdatePseudoVelocitySlow(slow_dt, ctx);
     this->UpdateVoltageCompSlow(ctx);
@@ -1098,8 +1070,14 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
     const int64_t start_us = esp_timer_get_time();
 #endif
 
+#if ENABLE_ARMED_TIMING_PROFILE
+    const uint32_t prof_rmt = this->armed_prof_.Mark();
+#endif
     esp_err_t ret =
             this->motor_interface_.SetMotorOutput(d1, d2, d3, d4);
+#if ENABLE_ARMED_TIMING_PROFILE
+    this->armed_prof_.Record(ArmedTimingStage::MOTOR_RMT, prof_rmt);
+#endif
 
 #if ENABLE_RMT_OUTPUT_PROFILE
     const int64_t elapsed_us = esp_timer_get_time() - start_us;
@@ -1145,6 +1123,9 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
 
     if (this->armed_log_dt_accum_ >= 0.004f)
     {
+#if ENABLE_ARMED_TIMING_PROFILE
+        const uint32_t prof_motor_log = this->armed_prof_.Mark();
+#endif
         this->armed_log_dt_accum_ = 0.0f;
 
 
@@ -1195,6 +1176,9 @@ esp_err_t KSSDrone::ArmedOutputFast(const float dt, ArmedContext& ctx)
 
         this->log_.mode = static_cast<uint8_t>(this->drone_mode_);
         this->log_.state = static_cast<uint8_t>(this->state_);
+#if ENABLE_ARMED_TIMING_PROFILE
+        this->armed_prof_.Record(ArmedTimingStage::MOTOR_LOG, prof_motor_log);
+#endif
     }
 
     return ESP_OK;
@@ -1212,16 +1196,7 @@ void KSSDrone::ArmedOutputCompMedium(const float dt, ArmedContext& ctx)
         return;
     }
 
-    float comp_dt = 0.0f;
-    if (!ConsumePeriodicDt(this->armed_output_comp_dt_accum_,
-                           dt,
-                           ARMED_OUTPUT_COMP_PERIOD_SEC,
-                           comp_dt))
-    {
-        return;
-    }
-
-    (void)comp_dt;
+    (void)dt; // fixed 100Hz slot, no inner periodic gate
 
     /*
      * pid_out.throttle 기준.

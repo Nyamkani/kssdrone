@@ -81,7 +81,9 @@ class ICM42688
 
         esp_err_t WriteRegister(uint8_t reg, uint8_t value);
         esp_err_t ReadRegister(uint8_t reg, uint8_t *buf);
-        esp_err_t ReadRegisters(uint8_t reg, uint8_t *buf, size_t len);
+        esp_err_t ReadRegisters(
+            uint8_t reg, uint8_t* buf, size_t len,
+            uint32_t* spi_cycles = nullptr);
 
         esp_err_t SoftReset();
         esp_err_t CheckWhoAmI();
@@ -97,10 +99,13 @@ class ICM42688
 
         esp_err_t Configure(const ICM42688Config& config);
 
-        esp_err_t ReadRawImu(int16_t& ax, int16_t& ay, int16_t& az,
-                            int16_t& gx, int16_t& gy, int16_t& gz,
-                            int16_t& temp, bool clear_interrupt_status = false);
-
+        esp_err_t ReadRawImu(
+            int16_t& ax, int16_t& ay, int16_t& az,
+            int16_t& gx, int16_t& gy, int16_t& gz,
+            int16_t& temp,
+            bool clear_interrupt_status = false,
+            uint32_t* spi_cycles = nullptr);
+            
         esp_err_t FlushFifo();
         esp_err_t ConfigureFifo(uint8_t fifo_config,uint8_t fifo_config1, uint16_t watermark_bytes);
         esp_err_t ReadFifoCount(uint16_t& count);

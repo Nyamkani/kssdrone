@@ -43,6 +43,15 @@ void KSSDrone::MainLoop()
     uint32_t armed_overrun_score = 0;
     float armed_guard_elapsed_dt = 0.0f;
 
+    // Attribution describes the previous iteration, not the current one.
+    using WaitCause = MainLoopGapCauseStats::WaitCause;
+    bool has_previous_loop = false;
+    WaitCause previous_wait = WaitCause::NORMAL;
+    uint16_t previous_slot = 0xFFFFU;
+    uint32_t previous_work_us = 0U;
+    bool previous_slow_bg = false;
+    bool previous_main_log = false;
+
 #if MAIN_LOOP_RATE_HZ <= 1000
     const TickType_t period = pdMS_TO_TICKS(1);
     TickType_t last_wake_time = xTaskGetTickCount();
@@ -68,16 +77,74 @@ void KSSDrone::MainLoop()
         next_loop_us += MAIN_LOOP_PERIOD_US;
 #endif
 
+#if ENABLE_DRONE_MAIN_STATS_LOG
+        if (has_previous_loop)
+        {
+            this->loop_gap_causes_.Observe(
+                raw_dt, previous_wait, previous_slot, previous_work_us,
+                previous_slow_bg, previous_main_log);
+        }
+#endif
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        // This start-to-start gap belongs to the previous ARMED slot.
+        // Exclude deliberate vTaskDelay(1) from normal-gap statistics.
+        if (has_previous_loop && this->armed_slot_capture_ &&
+            previous_slot < KssArmedSchedule::kSlotCount &&
+            previous_wait == WaitCause::NORMAL)
+        {
+            const float raw_gap_us = raw_dt * 1000000.0f;
+            if (raw_gap_us >= 0.0f)
+                this->armed_slot_active_[previous_slot].ObserveNormalGap(
+                    static_cast<uint32_t>(raw_gap_us + 0.5f));
+        }
+#endif
         this->UpdateMainLoopStats(raw_dt);
-        this->TryPrintMainLoopStats();
+        // Captured flight statistics do not count as serial output.
+        const bool this_loop_main_log = this->TryPrintMainLoopStats();
         this->TryPrintArmedProfileStats();
+
+#if ENABLE_DISARM_TIMING_PROFILE
+        this->TryPrintDisarmTimingStats();
+        this->disarm_timing_.BeginLoop(this->state_ == DroneState::DISARMED);
+        const uint32_t disarm_body_begin = this->disarm_timing_.Mark();
+#endif
 
         if (this->task_stop_.load())
         {
             break;
         }
 
+#if ENABLE_ARMED_TIMING_PROFILE
+        this->armed_prof_.BeginLoop(this->state_ == DroneState::ARMED);
+        const uint32_t prof_work = this->armed_prof_.Mark();
+        const uint32_t prof_fast_bg = this->armed_prof_.Mark();
+#endif
+#if ENABLE_DISARM_TIMING_PROFILE
+        const uint32_t disarm_fast_bg_begin = this->disarm_timing_.Mark();
+#endif
+        // Slot is captured BEFORE Armed() increments the phase index.
+        const uint16_t this_slot =
+            this->state_ == DroneState::ARMED
+                ? this->armed_fixed_slot_ : 0xFFFFU;
+        bool this_slow_bg = false;
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        uint32_t this_bg_elapsed_us = 0U;
+        uint32_t this_pre_bg_us = 0U;
+        int64_t this_bg_slack_us = 0;
+        const int64_t fast_bg_begin_us = esp_timer_get_time();
+#endif
         ret = this->FastBackgroundJobs(dt);
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        const int64_t fast_bg_end_us = esp_timer_get_time();
+        bool ran_armed_slot = false;
+#endif
+#if ENABLE_DISARM_TIMING_PROFILE
+        this->disarm_timing_.Record(DisarmTimingStage::FAST_BG,
+                                   disarm_fast_bg_begin);
+#endif
+#if ENABLE_ARMED_TIMING_PROFILE
+        this->armed_prof_.Record(ArmedTimingStage::FAST_BG, prof_fast_bg);
+#endif
         if (ret != ESP_OK)
         {
             this->ChangeState(DroneState::ERR);
@@ -102,12 +169,21 @@ void KSSDrone::MainLoop()
                 break;
 
             case DroneState::DISARMED:
+            {
+#if ENABLE_DISARM_TIMING_PROFILE
+                const uint32_t disarm_begin = this->disarm_timing_.Mark();
+#endif
                 ret = this->Disarmed(dt);
+#if ENABLE_DISARM_TIMING_PROFILE
+                this->disarm_timing_.Record(DisarmTimingStage::DISARMED,
+                                           disarm_begin);
+#endif
                 if (ret != ESP_OK)
                 {
                     this->ChangeState(DroneState::ERR);
                 }
                 break;
+            }
 
             case DroneState::ARMING:
                 ret = this->Arming(dt);
@@ -118,7 +194,18 @@ void KSSDrone::MainLoop()
                 break;
 
             case DroneState::ARMED:
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+                ran_armed_slot = true;
+#endif
+#if ENABLE_ARMED_TIMING_PROFILE
+                {
+                    const uint32_t prof_armed = this->armed_prof_.Mark();
+#endif
                 ret = this->Armed(dt);
+#if ENABLE_ARMED_TIMING_PROFILE
+                    this->armed_prof_.Record(ArmedTimingStage::ARMED, prof_armed);
+                }
+#endif
                 if (ret != ESP_OK)
                 {
                     this->ChangeState(DroneState::ERR);
@@ -141,10 +228,46 @@ void KSSDrone::MainLoop()
                 break;
         }
 
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        const int64_t armed_end_us = esp_timer_get_time();
+#endif
         this->slow_bg_dt_accum_ += dt;
         if (this->slow_bg_dt_accum_ >= BACKGROUND_SLOW_JOB_TIME)
         {
-            ret = this->SlowBackgroundJobs(this->slow_bg_dt_accum_);
+            this_slow_bg = true;
+#if ENABLE_ARMED_TIMING_PROFILE
+            const uint32_t prof_slow_bg = this->armed_prof_.Mark();
+#endif
+#if ENABLE_DISARM_TIMING_PROFILE
+            const uint32_t disarm_slow_bg_begin = this->disarm_timing_.Mark();
+#endif
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+            this->armed_bg_job_mask_ = 0U;
+            this->armed_bg_forced_mask_ = 0U;
+            const int64_t bg_begin_us = esp_timer_get_time();
+            this_pre_bg_us = static_cast<uint32_t>(
+                bg_begin_us - loop_start_us);
+#if MAIN_LOOP_RATE_HZ > 1000
+            this_bg_slack_us = next_loop_us - bg_begin_us;
+#endif
+#endif
+#if MAIN_LOOP_RATE_HZ > 1000
+            ret = this->ProcessSlowBackground(this->slow_bg_dt_accum_,
+                                              next_loop_us);
+#else
+            ret = this->ProcessSlowBackground(this->slow_bg_dt_accum_, 0);
+#endif
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+            this_bg_elapsed_us = static_cast<uint32_t>(
+                esp_timer_get_time() - bg_begin_us);
+#endif
+#if ENABLE_DISARM_TIMING_PROFILE
+            this->disarm_timing_.Record(DisarmTimingStage::SLOW_BG,
+                                       disarm_slow_bg_begin);
+#endif
+#if ENABLE_ARMED_TIMING_PROFILE
+            this->armed_prof_.Record(ArmedTimingStage::SLOW_BG, prof_slow_bg);
+#endif
             this->slow_bg_dt_accum_ = 0.0f;
 
             if (ret != ESP_OK)
@@ -152,6 +275,14 @@ void KSSDrone::MainLoop()
                 this->ChangeState(DroneState::ERR);
             }
         }
+
+#if ENABLE_ARMED_TIMING_PROFILE
+        this->armed_prof_.Record(ArmedTimingStage::LOOP_WORK, prof_work);
+        if (this->state_ == DroneState::ARMED)
+        {
+            this->armed_prof_.elapsed_s += raw_dt;
+        }
+#endif
 
         /*
          * WDT / overrun guard
@@ -166,7 +297,54 @@ void KSSDrone::MainLoop()
          * 2kHz 이상:
          * - busy-wait 기반이므로 guard가 중요함.
          */
+#if ENABLE_DISARM_TIMING_PROFILE
+        if (this->disarm_timing_.sampling)
+        {
+            this->disarm_timing_.Record(DisarmTimingStage::BODY_WORK,
+                                       disarm_body_begin);
+            ++this->disarm_timing_.sampled_loops;
+        }
+#endif
+        // Work timing stops before WDT guard/yield and deadline wait.
+        // Instrumentation adds small overhead but performs no serial I/O.
+        const int64_t pre_wait_us = esp_timer_get_time();
+        const uint32_t this_work_us =
+            static_cast<uint32_t>(pre_wait_us - loop_start_us);
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        if (ran_armed_slot && this->armed_slot_capture_ &&
+            this_slot < KssArmedSchedule::kSlotCount)
+        {
+            this->armed_slot_active_[this_slot].ObserveWork(
+                this_work_us,
+                static_cast<uint32_t>(fast_bg_begin_us - loop_start_us),
+                static_cast<uint32_t>(fast_bg_end_us - fast_bg_begin_us),
+                static_cast<uint32_t>(armed_end_us - fast_bg_end_us),
+                static_cast<uint32_t>(pre_wait_us - armed_end_us));
+
+            this->armed_bg_probe_active_.Observe(
+                this_slow_bg,
+                this_slow_bg ? this->armed_bg_job_mask_ : 0U,
+                this_slow_bg ? this->armed_bg_forced_mask_ : 0U,
+                this_slow_bg ? this_pre_bg_us : this_work_us,
+                this_work_us, this_bg_elapsed_us, this_bg_slack_us);
+        }
+#endif
+#if MAIN_LOOP_RATE_HZ > 1000
+        if (this->state_ == DroneState::ARMED)
+        {
+            const int64_t lateness_us =
+                esp_timer_get_time() - next_loop_us;
+            if (lateness_us > 0)
+            {
+                ++this->armed_fixed_deadline_miss_;
+                this->armed_fixed_max_late_us_ =
+                    std::max(this->armed_fixed_max_late_us_,
+                             static_cast<uint32_t>(lateness_us));
+            }
+        }
+#endif
         bool forced_idle_delay = false;
+        WaitCause this_wait = WaitCause::NORMAL;
 
         if (this->state_ == DroneState::ARMED)
         {
@@ -191,6 +369,7 @@ void KSSDrone::MainLoop()
             if (score_guard || time_guard)
             {
                 this->loop_stats_.wdt_guard++;
+                this_wait = WaitCause::OVERRUN_GUARD;
 
                 /*
                  * deadline을 계속 놓치는 경우 강제로 block.
@@ -242,6 +421,7 @@ void KSSDrone::MainLoop()
             if (force_idle_elapsed_dt >= MAIN_LOOP_FORCE_IDLE_INTERVAL_SEC)
             {
                 this->loop_stats_.wdt_guard++;
+                this_wait = WaitCause::PERIODIC_IDLE;
 
                 vTaskDelay(1);
 
@@ -306,8 +486,13 @@ void KSSDrone::MainLoop()
         }
 #endif
 
-        const int64_t work_time_us = esp_timer_get_time() - loop_start_us;
-        (void)work_time_us;
+        // This iteration's flags describe the NEXT start-to-start interval.
+        has_previous_loop = true;
+        previous_wait = this_wait;
+        previous_slot = this_slot;
+        previous_work_us = this_work_us;
+        previous_slow_bg = this_slow_bg;
+        previous_main_log = this_loop_main_log;
     }
 }
 

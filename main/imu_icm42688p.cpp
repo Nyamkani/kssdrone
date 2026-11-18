@@ -1,4 +1,6 @@
 #include "imu_icm42688p.h"
+#include "esp_cpu.h"
+
 
 ICM42688::ICM42688()
     : spi_(nullptr)
@@ -80,7 +82,9 @@ esp_err_t ICM42688::ReadRegister(uint8_t reg, uint8_t *buf)
     return ESP_OK;
 }
 
-esp_err_t ICM42688::ReadRegisters(uint8_t reg, uint8_t *buf, size_t len)
+esp_err_t ICM42688::ReadRegisters(
+    uint8_t reg, uint8_t* buf, size_t len,
+    uint32_t* spi_cycles)
 {
     if (buf == nullptr || len == 0)
     {
@@ -104,7 +108,17 @@ esp_err_t ICM42688::ReadRegisters(uint8_t reg, uint8_t *buf, size_t len)
     trans.tx_buffer = send_buf;
     trans.rx_buffer = read_buf;
 
+    const uint32_t start = spi_cycles
+        ? esp_cpu_get_cycle_count()
+        : 0U;
+
     esp_err_t ret = spi_device_transmit(spi_, &trans);
+
+    if (spi_cycles)
+    {
+        *spi_cycles = esp_cpu_get_cycle_count() - start;
+    }
+
     if (ret != ESP_OK)
     {
         return ret;
@@ -246,19 +260,17 @@ esp_err_t ICM42688::Configure(const ICM42688Config& config)
 
 
 esp_err_t ICM42688::ReadRawImu(
-    int16_t& ax,
-    int16_t& ay,
-    int16_t& az,
-    int16_t& gx,
-    int16_t& gy,
-    int16_t& gz,
+    int16_t& ax, int16_t& ay, int16_t& az,
+    int16_t& gx, int16_t& gy, int16_t& gz,
     int16_t& temp,
-    bool clear_interrupt_status)
+    bool clear_interrupt_status,
+    uint32_t* spi_cycles)
 {
     uint8_t buf[14] = {};
 
-    esp_err_t ret =
-        ReadRegisters(static_cast<uint8_t>(IMUCMD::TEMP_DATA1), buf, 14);
+    esp_err_t ret = ReadRegisters(
+        static_cast<uint8_t>(IMUCMD::TEMP_DATA1),
+        buf, 14, spi_cycles);
 
     if (ret != ESP_OK)
     {

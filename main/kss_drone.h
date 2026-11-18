@@ -28,6 +28,7 @@
 #include "pins.h"
 
 #include <atomic>
+#include <cstddef>
 #include <cmath>
 #include <algorithm>
 
@@ -68,8 +69,10 @@ Landing -> Disarmed
 7. MixerOutput -> motor mixer output data
 */
 
-//firmware version
+// Firmware revision: v1.3-c aligns multi-rate execution with the existing FSM.
+// Keep the numeric revision for legacy consumers; use the full string for logs.
 #define FW_VERSION    1.3f
+#define FW_VERSION_STRING "v1.3-c"
 // auto gyro bias calibration
 #define GYRO_BIAS_CALIB_TIME_S        1.0f
 #define GYRO_BIAS_MAX_ABS_RAD_S       0.15f
@@ -94,6 +97,9 @@ Landing -> Disarmed
 
 //BackgroundJob 
 #define CHECK_BATTERY_PERIOD_S  0.05f                // Check battery every 50ms (20Hz)
+// Optional CRSF TX: keep the implementation for a future telemetry-capable controller.
+// RX command cache and safety event processing remain active at all times.
+#define ENABLE_CRSF_TELEMETRY 0
 #define CHECK_SEND_TELEMETRY_S 0.1f      // Send telemetry every 100ms (10Hz)
 #define CHECK_SEND_LOG_S       0.1f            // Send log everyt 100ms (10hz)
 
@@ -113,33 +119,246 @@ Landing -> Disarmed
 
 //task log
 #define ENABLE_DRONE_MAIN_STATS_LOG  1
+#define ENABLE_ARMED_SLOT_TIMING_PROFILE 0 // enable only for diagnostics (high loop overhead)
 #define ENABLE_CMD_DETAIL_LOG 0
 #define ENABLE_RMT_OUTPUT_PROFILE  0  // 1: Enable, 0: Disable
 #define ENABLE_MOTOR_OUTPUT_COUNT 1
 #define PERIODIC_TIMER_USE_FMOD  0  // 1: 기존 fmod, 0: 반복 뺄셈
+#define ENABLE_ARMED_TIMING_PROFILE 0  // legacy multi-stage profiler: disabled
+#define ENABLE_IMU_TIMING_PROFILE 0    // test: IMU-only sampled profiler
+#define ENABLE_DISARM_TIMING_PROFILE 0
+#define ENABLE_BG_SCHED_STATS_LOG 0  // enable only for separate BG diagnostics
+#define DISARM_TIMING_SAMPLE_EVERY 31U
+#define DISARM_TIMING_REPORT_SAMPLES 128U
+#define IMU_TIMING_SAMPLE_EVERY 31U
+#define IMU_TIMING_REPORT_SAMPLES 128U
+#define ARMED_TIMING_SAMPLE_EVERY 17 // non-harmonic with 2/4/8/20 loop subrates
+#define ARMED_TIMING_REPORT_SEC 2.0f
 
 
 //time
 #define BACKGROUND_SLOW_JOB_TIME   0.010f
 #define ARMED_SLOW_COMP_TIME       0.004f
 
+// Admission estimates (not measured WCET): used only for ARMED/LANDING.
+// When no slot has enough slack, bounded-age jobs execute at the next
+// scheduler opportunity even if they exceed the 500us control deadline.
+#define BG_BATTERY_BUDGET_US        650LL
+#define BG_TELEMETRY_BUDGET_US      240LL
+#define BG_LED_BUDGET_US             90LL
+#define BG_DETAIL_LOG_BUDGET_US     300LL
+#define BG_BATTERY_MAX_GAP_S       0.070f  // nominal 50ms, forced at ~70ms
+#define BG_TELEMETRY_MAX_GAP_S     0.300f  // nominal 100ms
+#define BG_LED_MAX_GAP_S           0.100f  // nominal 10ms
+#define BG_DETAIL_LOG_MAX_GAP_S    0.300f
+
 #define COMMAND_TIMEOUT_US    200000LL
 
-//log
+// Sampled, read-only timing profiler. The core is pinned; 32-bit cycle subtraction
+// is wrap-safe for the short intervals measured here. No allocations or per-loop logs.
+#if ENABLE_ARMED_TIMING_PROFILE || \
+    ENABLE_IMU_TIMING_PROFILE || \
+    ENABLE_DISARM_TIMING_PROFILE
+#include "esp_cpu.h"
+#endif
+
+#if ENABLE_ARMED_TIMING_PROFILE
+
+
+enum class ArmedTimingStage : uint8_t
+{
+    LOOP_WORK,
+    FAST_BG,
+    ARMED,
+    CONTEXT,
+    FAILSAFE,
+    CMD_CALC,
+    CMD_SKIP,
+    IMU,
+    EST_CALC,
+    EST_SKIP,
+    AIR_CALC,
+    AIR_SKIP,
+    SLOW_CALC,
+    SLOW_SKIP,
+    TILT,
+    PID,
+    OUTC_CALC,
+    OUTC_SKIP,
+    MOTOR,
+    MOTOR_RMT,
+    MOTOR_LOG,
+    SLOW_BG,
+    COUNT
+};
+
+struct ArmedProfilePoint
+{
+    uint64_t sum_cycles = 0;
+    uint32_t max_cycles = 0;
+    uint32_t count = 0;
+};
+
 struct ArmedProfileStats
 {
-    uint64_t count = 0;
+    static constexpr size_t STAGE_COUNT = static_cast<size_t>(ArmedTimingStage::COUNT);
+    ArmedProfilePoint stages[STAGE_COUNT]{};
+    uint32_t sample_slot = 0;
+    bool sampling = false;
+    float elapsed_s = 0.0f;
+    uint8_t report_line = 0; // spread UART logs over four loop iterations
 
-    int64_t prepare_us = 0;
-    int64_t slow_comp_us = 0;
-    int64_t control_us = 0;
-    int64_t total_us = 0;
+    inline void BeginLoop(const bool armed)
+    {
+        sampling = false;
+        if (armed && ++sample_slot >= ARMED_TIMING_SAMPLE_EVERY)
+        {
+            sample_slot = 0;
+            sampling = true;
+        }
+    }
 
-    int64_t prepare_max_us = 0;
-    int64_t slow_comp_max_us = 0;
-    int64_t control_max_us = 0;
-    int64_t total_max_us = 0;
+    inline uint32_t Mark() const
+    {
+        return sampling ? static_cast<uint32_t>(esp_cpu_get_cycle_count()) : 0U;
+    }
+
+    inline void Record(const ArmedTimingStage stage, const uint32_t begin_cycles)
+    {
+        if (!sampling)
+        {
+            return;
+        }
+        const uint32_t cycles = static_cast<uint32_t>(esp_cpu_get_cycle_count()) - begin_cycles;
+        auto& p = stages[static_cast<size_t>(stage)];
+        p.sum_cycles += cycles;
+        if (cycles > p.max_cycles) p.max_cycles = cycles;
+        ++p.count;
+    }
+
+    inline const ArmedProfilePoint& Get(const ArmedTimingStage stage) const
+    {
+        return stages[static_cast<size_t>(stage)];
+    }
+
+    inline void ResetWindow()
+    {
+        for (auto& p : stages) p = {};
+        elapsed_s = 0.0f;
+        // Preserve sample_slot to keep the sample phases rotating.
+    }
 };
+#endif
+
+#if ENABLE_IMU_TIMING_PROFILE
+struct ImuTimingStats
+{
+    uint32_t sample_slot = 0;
+    uint32_t samples = 0;
+    uint64_t sum_cycles = 0;
+    uint32_t max_cycles = 0;
+    uint64_t raw_sum_cycles = 0;
+    uint32_t raw_max_cycles = 0;
+    uint64_t parse_sum_cycles = 0;
+    uint32_t parse_max_cycles = 0;
+    uint64_t remainder_sum_cycles = 0;
+    uint32_t remainder_max_cycles = 0;
+    uint64_t spi_sum_cycles = 0;
+    uint32_t spi_max_cycles = 0;
+};
+#endif
+
+#if ENABLE_DISARM_TIMING_PROFILE
+
+enum class DisarmTimingStage : uint8_t
+{
+    BODY_WORK,
+    FAST_BG,
+    DISARMED,
+    IMU,
+    EKF_PREDICT,
+    EKF_UPDATE,
+    SLOW_BG,
+    BG_BATTERY,
+    BG_TELEMETRY,
+    BG_LED,
+    COUNT
+};
+
+struct DisarmTimingPoint
+{
+    uint64_t sum_cycles = 0;
+    uint32_t max_cycles = 0;
+    uint32_t count = 0;
+};
+
+struct DisarmTimingStats
+{
+    static constexpr size_t STAGE_COUNT =
+        static_cast<size_t>(DisarmTimingStage::COUNT);
+
+    DisarmTimingPoint stages[STAGE_COUNT]{};
+
+    uint32_t sample_slot = 0;
+    uint32_t sampled_loops = 0;
+    bool sampling = false;
+
+    inline void BeginLoop(bool disarmed)
+    {
+        sampling = false;
+
+        if (disarmed &&
+            ++sample_slot >= DISARM_TIMING_SAMPLE_EVERY)
+        {
+            sample_slot = 0;
+            sampling = true;
+        }
+    }
+
+    inline uint32_t Mark() const
+    {
+        return sampling
+            ? static_cast<uint32_t>(esp_cpu_get_cycle_count())
+            : 0U;
+    }
+
+    inline void Record(
+        DisarmTimingStage stage,
+        uint32_t begin_cycles,
+        bool force = false)
+    {
+        // force: count every DISARMED slow-background event, including
+        // battery/telemetry calls that a 1-in-31 sample could miss.
+        if (!sampling && !force)
+        {
+            return;
+        }
+
+        const uint32_t elapsed =
+            static_cast<uint32_t>(esp_cpu_get_cycle_count()) -
+            begin_cycles;
+
+        auto& p = stages[static_cast<size_t>(stage)];
+        p.sum_cycles += elapsed;
+        if (elapsed > p.max_cycles)
+        {
+            p.max_cycles = elapsed;
+        }
+        ++p.count;
+    }
+
+    inline void ResetWindow()
+    {
+        for (auto& p : stages)
+        {
+            p = {};
+        }
+        sampled_loops = 0;
+        // Keep sample_slot so sampling phases continue rotating.
+    }
+};
+
+#endif
 
 struct ArmedContext
 {
@@ -223,6 +442,21 @@ struct PeriodicTimer
     }
 };
 
+struct BackgroundScheduleStats
+{
+    uint32_t battery_deferred = 0;
+    uint32_t telemetry_deferred = 0;
+    uint32_t led_deferred = 0;
+    uint32_t battery_forced = 0;
+    uint32_t telemetry_forced = 0;
+    uint32_t led_forced = 0;
+    uint32_t battery_max_gap_us = 0;
+    uint32_t telemetry_max_gap_us = 0;
+    uint32_t led_max_gap_us = 0;
+
+    void Reset() { *this = {}; }
+};
+
 class KSSDrone
 {
     public:
@@ -262,10 +496,24 @@ class KSSDrone
         float arming_check_dt_ = 0.0f;
         float telemetry_send_dt_ = 0.0f;
         float log_send_dt_ = 0.0f;
+        float led_update_dt_ = 0.0f;
+        uint16_t armed_fixed_slot_ = 0U;
+        float armed_fixed_elapsed_[static_cast<unsigned>(KssArmedSchedule::Job::COUNT)] = {};
+        uint32_t armed_fixed_deadline_miss_ = 0U;
+        uint32_t armed_fixed_max_late_us_ = 0U;
+        BackgroundScheduleStats bg_schedule_stats_{};
 
         //test
         float test_log_dt_ = 0.0f;
+#if ENABLE_ARMED_TIMING_PROFILE
         ArmedProfileStats armed_prof_{};
+#endif
+#if ENABLE_IMU_TIMING_PROFILE
+        ImuTimingStats imu_timing_{};
+#endif
+#if ENABLE_DISARM_TIMING_PROFILE
+        DisarmTimingStats disarm_timing_{};
+#endif
 
         /*
         * Command / target cache
@@ -450,9 +698,153 @@ class KSSDrone
         uint16_t last_control_seq_ = 0;
         bool control_seq_ready_ = false;
 
+        // Flight 1Hz statistics: fixed RAM ring, emitted only in DISARMED.
+        struct LoopReport
+        {
+            LoopTimingStats loop{};
+            MainLoopGapCauseStats gap{};
+            ImuFrameStats imu{};
+            BackgroundScheduleStats bg{};
+            uint32_t serial = 0U;
+            uint32_t motor = 0U;
+            uint32_t deadline_miss = 0U;
+            uint32_t deadline_max_us = 0U;
+            uint8_t measured_state = 0U;
+        };
+        static constexpr uint8_t LOOP_REPORT_CAPACITY = 48U;
+        LoopReport deferred_loop_reports_[LOOP_REPORT_CAPACITY]{};
+        uint8_t deferred_write_ = 0U;
+        uint8_t deferred_read_ = 0U;
+        uint8_t deferred_count_ = 0U;
+        uint8_t last_flight_state_ = 0U;
+        uint32_t deferred_dropped_ = 0U;
+        uint32_t report_serial_ = 0U;
+        int64_t deferred_flush_us_ = 0;
+        bool was_flight_ = false;
+
+        // ARMED phase diagnostic; one aggregate record per phase for the
+        // entire flight, independent of the 48-second 1Hz report ring.
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        struct ArmedSlotTiming
+        {
+            uint32_t count = 0U;
+            uint64_t sum_work_us = 0U;
+            uint32_t min_work_us = UINT32_MAX;
+            uint32_t max_work_us = 0U;
+            uint32_t max_pre_us = 0U;
+            uint32_t max_fast_bg_us = 0U;
+            uint32_t max_armed_us = 0U;
+            uint32_t max_slow_bg_us = 0U;
+            uint32_t work_over_budget = 0U;
+            uint32_t max_normal_gap_us = 0U;
+            uint32_t normal_gap_over_budget = 0U;
+            uint32_t normal_gap_over_1000us = 0U;
+
+            void ObserveWork(const uint32_t work, const uint32_t pre,
+                             const uint32_t fast_bg, const uint32_t armed,
+                             const uint32_t slow_bg)
+            {
+                ++count;
+                sum_work_us += work;
+                min_work_us = std::min(min_work_us, work);
+                max_work_us = std::max(max_work_us, work);
+                max_pre_us = std::max(max_pre_us, pre);
+                max_fast_bg_us = std::max(max_fast_bg_us, fast_bg);
+                max_armed_us = std::max(max_armed_us, armed);
+                max_slow_bg_us = std::max(max_slow_bg_us, slow_bg);
+                if (work > MAIN_LOOP_PERIOD_US) ++work_over_budget;
+            }
+
+            void ObserveNormalGap(const uint32_t gap_us)
+            {
+                max_normal_gap_us = std::max(max_normal_gap_us, gap_us);
+                if (gap_us > MAIN_LOOP_PERIOD_US)
+                    ++normal_gap_over_budget;
+                if (gap_us > 1000U)
+                    ++normal_gap_over_1000us;
+            }
+        };
+        ArmedSlotTiming armed_slot_active_[KssArmedSchedule::kSlotCount]{};
+        ArmedSlotTiming armed_slot_finished_[KssArmedSchedule::kSlotCount]{};
+        uint16_t armed_slot_dump_index_ = 0U;
+        uint32_t armed_slot_dump_flight_ = 0U;
+        int64_t armed_slot_dump_last_us_ = 0;
+        bool armed_slot_dump_pending_ = false;
+        bool armed_slot_capture_ = false;
+        // Flight-wide A/B probe: does spare slack admit BG jobs that
+        // make a 500us loop overrun? No I/O or allocations in the hot path.
+        struct ArmedBgAdmissionProbe
+        {
+            enum : uint8_t
+            {
+                NO_CALL = 0U,
+                CALL_NO_JOB = 1U,
+                ADMITTED = 2U,
+                FORCED = 3U,
+                CATEGORY_COUNT = 4U,
+                BATTERY = 1U,
+                TELEMETRY = 2U,
+                LED = 4U
+            };
+            struct Case
+            {
+                uint32_t loops = 0U;
+                uint64_t work_sum_us = 0U;
+                uint32_t work_max_us = 0U;
+                uint32_t bg_max_us = 0U;
+                uint32_t work_over_500 = 0U;
+                uint32_t tipped_over_500 = 0U;
+                uint32_t bg_exceeded_slack = 0U;
+            };
+            Case cases[CATEGORY_COUNT]{};
+            uint32_t job_runs[3]{};
+            uint32_t forced_runs[3]{};
+
+            void Observe(const bool called, const uint8_t jobs,
+                         const uint8_t forced, const uint32_t pre_bg_us,
+                         const uint32_t work_us, const uint32_t bg_us,
+                         const int64_t slack_us)
+            {
+                const uint8_t category = !called ? NO_CALL
+                    : jobs == 0U ? CALL_NO_JOB
+                    : forced != 0U ? FORCED : ADMITTED;
+                Case& c = cases[category];
+                ++c.loops;
+                c.work_sum_us += work_us;
+                c.work_max_us = std::max(c.work_max_us, work_us);
+                c.bg_max_us = std::max(c.bg_max_us, bg_us);
+                if (work_us > MAIN_LOOP_PERIOD_US)
+                    ++c.work_over_500;
+                // A core that was on time but became late after slow BG.
+                if (called && pre_bg_us <= MAIN_LOOP_PERIOD_US &&
+                    work_us > MAIN_LOOP_PERIOD_US)
+                    ++c.tipped_over_500;
+                // Enough slack at entry does not guarantee actual job cost.
+                if (called && jobs != 0U && slack_us > 0 &&
+                    static_cast<int64_t>(bg_us) > slack_us)
+                    ++c.bg_exceeded_slack;
+
+                if (jobs & BATTERY) ++job_runs[0];
+                if (jobs & TELEMETRY) ++job_runs[1];
+                if (jobs & LED) ++job_runs[2];
+                if (forced & BATTERY) ++forced_runs[0];
+                if (forced & TELEMETRY) ++forced_runs[1];
+                if (forced & LED) ++forced_runs[2];
+            }
+        };
+        ArmedBgAdmissionProbe armed_bg_probe_active_{};
+        ArmedBgAdmissionProbe armed_bg_probe_finished_{};
+        uint8_t armed_bg_job_mask_ = 0U;
+        uint8_t armed_bg_forced_mask_ = 0U;
+        uint8_t armed_bg_dump_index_ = 0U;
+        int64_t armed_bg_dump_last_us_ = 0;
+        bool armed_bg_dump_pending_ = false;
+#endif
+
         //task log
         // loop timing statistics
         LoopTimingStats loop_stats_{};
+        MainLoopGapCauseStats loop_gap_causes_{};
         ImuFrameStats imu_frame_stats_{};
         DisarmReason debug_disarm_reason_ = DisarmReason::NONE;
 
@@ -489,10 +881,13 @@ class KSSDrone
         esp_err_t SetBHandle(board_handles_t bhandle);
 
 
-        //Jobs
-        esp_err_t BackgroundJobs(const float dt);
+        // Jobs: safety path is unconditional; slow jobs are budget-admitted.
         esp_err_t FastBackgroundJobs(const float dt);
-        esp_err_t SlowBackgroundJobs(const float dt);
+        esp_err_t ProcessSlowBackground(float dt, int64_t deadline_us);
+        esp_err_t BatteryBackgroundJob(float actual_dt);
+        esp_err_t TelemetryBackgroundJob();
+        void LedBackgroundJob(float actual_dt);
+        void DetailLogBackgroundJob();
 
         //armed
         void LoadArmedContextCache(ArmedContext& ctx);
@@ -500,7 +895,8 @@ class KSSDrone
 
         esp_err_t ArmedFailsafeFast(float dt);
         esp_err_t ArmedCommandMedium(float dt, ArmedContext& ctx);
-        esp_err_t ArmedImuFast(float dt, ArmedContext& ctx);
+        esp_err_t ArmedImuFast(float dt, ArmedContext& ctx,
+                               IMUReadTimingSample* timing = nullptr);
         esp_err_t ArmedEstimatorMedium(float dt, ArmedContext& ctx);
         void ArmedAirborneSlow(float dt, ArmedContext& ctx);
         void ArmedSlowCompUpdate(float dt, ArmedContext& ctx);
@@ -526,8 +922,10 @@ class KSSDrone
 
         //log
         void UpdateMainLoopStats(float raw_dt_s);
-        void TryPrintMainLoopStats();
+        bool TryPrintMainLoopStats(); // true only if an ESP_LOG was executed
+        void PrintMainLoopReport(const LoopReport& report, bool buffered);
         void TryPrintArmedProfileStats();
+        void TryPrintDisarmTimingStats();
         
     private:
         void ChangeState(const DroneState to_state);
