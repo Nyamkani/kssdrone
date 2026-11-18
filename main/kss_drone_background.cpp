@@ -63,6 +63,14 @@ esp_err_t KSSDrone::ProcessSlowBackground(const float dt,
             this->battery_check_dt_ >= BG_BATTERY_MAX_GAP_S;
         if (forced || fits(BG_BATTERY_BUDGET_US))
         {
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+            if (budgeted)
+            {
+                this->armed_bg_job_mask_ |= ArmedBgAdmissionProbe::BATTERY;
+                if (forced)
+                    this->armed_bg_forced_mask_ |= ArmedBgAdmissionProbe::BATTERY;
+            }
+#endif
             const float actual_dt = this->battery_check_dt_;
             const esp_err_t ret = this->BatteryBackgroundJob(actual_dt);
             if (ret != ESP_OK)
@@ -93,6 +101,14 @@ esp_err_t KSSDrone::ProcessSlowBackground(const float dt,
             this->telemetry_send_dt_ >= BG_TELEMETRY_MAX_GAP_S;
         if (forced || fits(BG_TELEMETRY_BUDGET_US))
         {
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+            if (budgeted)
+            {
+                this->armed_bg_job_mask_ |= ArmedBgAdmissionProbe::TELEMETRY;
+                if (forced)
+                    this->armed_bg_forced_mask_ |= ArmedBgAdmissionProbe::TELEMETRY;
+            }
+#endif
             const float actual_dt = this->telemetry_send_dt_;
             const esp_err_t ret = this->TelemetryBackgroundJob();
             if (ret != ESP_OK)
@@ -122,6 +138,14 @@ esp_err_t KSSDrone::ProcessSlowBackground(const float dt,
             this->led_update_dt_ >= BG_LED_MAX_GAP_S;
         if (forced || fits(BG_LED_BUDGET_US))
         {
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+            if (budgeted)
+            {
+                this->armed_bg_job_mask_ |= ArmedBgAdmissionProbe::LED;
+                if (forced)
+                    this->armed_bg_forced_mask_ |= ArmedBgAdmissionProbe::LED;
+            }
+#endif
             const float actual_dt = this->led_update_dt_;
             this->LedBackgroundJob(actual_dt);
             this->led_update_dt_ = 0.0f;
