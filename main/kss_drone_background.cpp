@@ -29,6 +29,12 @@ esp_err_t KSSDrone::FastBackgroundJobs(const float dt)
 
 esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
 {
+#if ENABLE_DISARM_TIMING_PROFILE
+    // Capture every actual background operation in DISARMED mode,
+    // rather than relying on the 1-in-31 main-loop sample.
+    const bool disarm_bg_profile = (this->state_ == DroneState::DISARMED);
+#endif
+
     this->battery_check_dt_ += dt;
 
     if (this->battery_check_dt_ >= CHECK_BATTERY_PERIOD_S)
@@ -40,9 +46,20 @@ esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
                 CHECK_BATTERY_PERIOD_S;
         }
 
+#if ENABLE_DISARM_TIMING_PROFILE
+        const uint32_t battery_begin = disarm_bg_profile
+            ? static_cast<uint32_t>(esp_cpu_get_cycle_count()) : 0U;
+#endif
         const esp_err_t ret =
             this->battery_monitor_.Update(
                 CHECK_BATTERY_PERIOD_S);
+#if ENABLE_DISARM_TIMING_PROFILE
+        if (disarm_bg_profile)
+        {
+            this->disarm_timing_.Record(
+                DisarmTimingStage::BG_BATTERY, battery_begin, true);
+        }
+#endif
 
         if (ret != ESP_OK)
         {
@@ -77,7 +94,18 @@ esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
         const TelemetryPacket send_pkt_ = this->tpkt_;
 
         // esp_err_t ret = this->esp_now_interface_.SendTelemetry(send_pkt_);
+#if ENABLE_DISARM_TIMING_PROFILE
+        const uint32_t telemetry_begin = disarm_bg_profile
+            ? static_cast<uint32_t>(esp_cpu_get_cycle_count()) : 0U;
+#endif
         esp_err_t ret = this->crsf_receiver_.SendTelemetry(send_pkt_);
+#if ENABLE_DISARM_TIMING_PROFILE
+        if (disarm_bg_profile)
+        {
+            this->disarm_timing_.Record(
+                DisarmTimingStage::BG_TELEMETRY, telemetry_begin, true);
+        }
+#endif
 
         if (ret != ESP_OK)
         {
@@ -121,7 +149,18 @@ esp_err_t KSSDrone::SlowBackgroundJobs(const float dt)
         }
     }
 
+#if ENABLE_DISARM_TIMING_PROFILE
+    const uint32_t led_begin = disarm_bg_profile
+        ? static_cast<uint32_t>(esp_cpu_get_cycle_count()) : 0U;
+#endif
     this->led_controller_.Update(dt);
+#if ENABLE_DISARM_TIMING_PROFILE
+    if (disarm_bg_profile)
+    {
+        this->disarm_timing_.Record(
+            DisarmTimingStage::BG_LED, led_begin, true);
+    }
+#endif
 
     return ESP_OK;
 }
