@@ -374,6 +374,25 @@ void KSSDrone::TryPrintMainLoopStats()
         this->imu_frame_stats_.last_seq_for_log,
         this->imu_frame_stats_.last_sample_count
     );
+    const auto& bg = this->bg_schedule_stats_;
+    if (bg.battery_deferred || bg.telemetry_deferred || bg.led_deferred ||
+        bg.battery_forced || bg.telemetry_forced || bg.led_forced)
+    {
+        ESP_LOGI(TAG,
+            "BG_SCHED deferred(b/t/l)=%lu/%lu/%lu "
+            "forced(b/t/l)=%lu/%lu/%lu "
+            "max_gap_ms(b/t/l)=%lu/%lu/%lu",
+            static_cast<unsigned long>(bg.battery_deferred),
+            static_cast<unsigned long>(bg.telemetry_deferred),
+            static_cast<unsigned long>(bg.led_deferred),
+            static_cast<unsigned long>(bg.battery_forced),
+            static_cast<unsigned long>(bg.telemetry_forced),
+            static_cast<unsigned long>(bg.led_forced),
+            static_cast<unsigned long>(bg.battery_max_gap_us / 1000U),
+            static_cast<unsigned long>(bg.telemetry_max_gap_us / 1000U),
+            static_cast<unsigned long>(bg.led_max_gap_us / 1000U));
+    }
+    this->bg_schedule_stats_.Reset();
     this->loop_stats_.Reset();
     this->imu_frame_stats_.ResetKeepLastSeq();
     this->motor_output_count_ = 0;
