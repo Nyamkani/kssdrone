@@ -41,6 +41,9 @@ void KSSDrone::LoadArmedContextCache(ArmedContext& ctx)
 
 void KSSDrone::ResetArmedRuntime()
 {
+#if ENABLE_IMU_TIMING_PROFILE
+    this->imu_timing_ = {};
+#endif
     this->armed_cmd_valid_ = false;
     this->armed_target_valid_ = false;
     this->armed_imu_valid_ = false;
