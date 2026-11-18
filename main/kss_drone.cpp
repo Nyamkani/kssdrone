@@ -490,20 +490,28 @@ void KSSDrone::TryPrintArmedProfileStats()
     if (this->state_ == DroneState::ARMED &&
         this->imu_timing_.samples >= IMU_TIMING_REPORT_SAMPLES)
     {
+        const double denom = static_cast<double>(this->imu_timing_.samples) *
+                             static_cast<double>(CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
         const double mhz = static_cast<double>(CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
-        const double avg_us =
-            static_cast<double>(this->imu_timing_.sum_cycles) /
-            (static_cast<double>(this->imu_timing_.samples) * mhz);
-        const double max_us =
-            static_cast<double>(this->imu_timing_.max_cycles) / mhz;
+        const auto& p = this->imu_timing_;
 
-        ESP_LOGI(TAG, "IMU_ONLY_TIMING avg=%.2fus max=%.2fus samples=%lu every=%lu",
-                 avg_us, max_us,
-                 static_cast<unsigned long>(this->imu_timing_.samples),
+        ESP_LOGI(TAG,
+                 "IMU_PHASE us(avg/max) total=%.2f/%.2f raw=%.2f/%.2f parse=%.2f/%.2f rest=%.2f/%.2f samples=%lu every=%lu",
+                 static_cast<double>(p.sum_cycles) / denom,
+                 static_cast<double>(p.max_cycles) / mhz,
+                 static_cast<double>(p.raw_sum_cycles) / denom,
+                 static_cast<double>(p.raw_max_cycles) / mhz,
+                 static_cast<double>(p.parse_sum_cycles) / denom,
+                 static_cast<double>(p.parse_max_cycles) / mhz,
+                 static_cast<double>(p.remainder_sum_cycles) / denom,
+                 static_cast<double>(p.remainder_max_cycles) / mhz,
+                 static_cast<unsigned long>(p.samples),
                  static_cast<unsigned long>(IMU_TIMING_SAMPLE_EVERY));
-        this->imu_timing_.samples = 0;
-        this->imu_timing_.sum_cycles = 0;
-        this->imu_timing_.max_cycles = 0;
+
+        // Keep the sampling phase while resetting the measurement window.
+        const uint32_t sample_slot = this->imu_timing_.sample_slot;
+        this->imu_timing_ = {};
+        this->imu_timing_.sample_slot = sample_slot;
     }
 #endif
 }
