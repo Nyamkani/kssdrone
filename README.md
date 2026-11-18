@@ -1,6 +1,6 @@
-# ESP32-S3 Drone Firmware — Rev 1.3-b
+# ESP32-S3 Drone Firmware — Rev 1.3-c
 
-> Seeed Studio XIAO ESP32-S3 기반 2.5인치 쿼드콥터 비행 제어 펌웨어입니다. Rev 1.3-b는 ESP-NOW 조종 링크를 ELRS/CRSF로 교체하고, 실제 조종기 입력·안전 절차와 야외 비행 검증까지 완료한 Rev1.x의 현재 안정화 버전입니다.
+> Seeed Studio XIAO ESP32-S3 기반 2.5인치 쿼드콥터 비행 제어 펌웨어입니다. Rev 1.3-c는 기존 FSM과 제어 기능을 그대로 유지하면서, 각 기능의 실행 주기를 맞추기 위한 추가 실행 스케줄을 적용한 버전입니다. ELRS/CRSF 전환 및 야외 비행 검증은 Rev 1.3-b에서 수행했습니다.
 
 [English](#english)
 
@@ -8,18 +8,18 @@
 
 이 프로젝트는 센서 입력, 자세 추정, PID 제어, 상태 머신, 추력 보정, 모터 출력을 하나의 ESP32-S3 비행 제어기에 통합한 개인 제작 드론 펌웨어입니다.
 
-Rev 1.3-b에서는 Rev 1.2의 multi-rate 비행 제어 구조를 유지하면서 전용 ESP-NOW 조종기 대신 RadioMaster 조종기와 ELRS 수신기를 사용하도록 통신 계층을 변경했습니다. CRSF RC 채널 수신, 명령 반복 전송, 통신 timeout 및 스위치 edge 검출을 실제 제어 파이프라인에 통합했습니다. 배터리·비행 모드 telemetry 송신 구현은 확장용으로 보존하되 현재 `test` 설정에서는 기본 비활성화합니다.
+Rev 1.3-b에서는 RadioMaster/ELRS/CRSF 조종 링크를 도입했습니다. Rev 1.3-c는 기존 FSM·제어 알고리즘을 유지한 채 20ms/40-slot 스케줄로 IMU·EKF·PID·Motor 실행 주기를 정렬합니다. CRSF RC 채널 수신, 명령 반복 전송, 통신 timeout 및 스위치 edge 검출을 실제 제어 파이프라인에 통합했습니다. 배터리·비행 모드 telemetry 송신 구현은 확장용으로 보존하되 현재 `test` 설정에서는 기본 비활성화합니다.
 
 ## 현재 상태
 
 | 항목 | 상태 |
 | --- | --- |
-| 현재 버전 | **Rev 1.3-b — ELRS/CRSF stabilization** |
+| 현재 버전 | **Rev 1.3-c — Multi-rate execution scheduling** |
 | 빌드 및 기본 기능 | 확인 완료 |
 | RadioMaster/ELRS 채널 동작 | 확인 완료 |
 | 목표 main control rate | 2 kHz |
 | ARMED 상태 실측 주기 (`test`, 2026-11) | 약 1,959 Hz (TX·정밀 계측 OFF) |
-| Motor/DSHOT 출력 | 1 kHz |
+| Motor/DSHOT 출력 | 목표 1 kHz / 별도 실측 **995–997 Hz** |
 | 실제 야외 비행 | **검증 완료** |
 | 장거리 통신 범위 | 추가 검증 필요 |
 
@@ -38,7 +38,7 @@ Rev 1.3-b에서는 Rev 1.2의 multi-rate 비행 제어 구조를 유지하면서
 
 ## 프로그램 구조
 
-Rev 1.3-b는 **CRSF 수신 Task**, **IMU 취득 Task**, **비행 제어 Main Task**를 분리한 FreeRTOS 구조입니다. 통신·센서 데이터를 공유하고, 메인 FSM에서 안전 상태와 멀티레이트 제어 파이프라인을 관리합니다.
+Rev 1.3-c는 기존 **CRSF 수신 Task**, **IMU 취득 Task**, **비행 제어 Main Task**를 분리한 FreeRTOS 구조입니다. 통신·센서 데이터를 공유하고, 메인 FSM에서 안전 상태와 멀티레이트 제어 파이프라인을 관리합니다.
 
 ### 비행 제어 구조도
 
@@ -68,7 +68,7 @@ flowchart TD
     end
     CMD --> MAIN
     IMUSNAP --> EST
-    MIX --> DSHOT["RMT DSHOT - 1 kHz"] --> ESC["ESC / Four Motors"]
+    MIX --> DSHOT["RMT DSHOT - 1kHz target / 995-997Hz observed"] --> ESC["ESC / Four Motors"]
     BAT -.-> TEL["Optional CRSF Telemetry TX (default OFF)"]
     TEL -.-> RX
 ```
@@ -121,7 +121,7 @@ flowchart TD
 
 GPS frame(`0x02`)은 현재 구현 범위에서 제외했습니다. Link Statistics는 수신할 수 있지만 아직 비행 제어 판단에는 사용하지 않습니다. TX는 향후 기능으로 보존하며 기본 OFF입니다. 활성화하더라도 best-effort 경로로 처리합니다.
 
-## Rev 1.3-b 주요 변경점
+## Rev 1.3-b에서 유지한 기능
 
 ### ELRS/CRSF 입력 확정
 
@@ -189,7 +189,7 @@ SB의 MID와 HIGH는 동일한 소프트 랜딩 활성 상태로 처리하므로
 | 처리 항목 | 목표 또는 설정 |
 | --- | ---: |
 | Main control / IMU fast processing / rate PID | 2 kHz target |
-| Motor / DSHOT output | 1 kHz |
+| Motor / DSHOT output | 1kHz target / separately measured 995–997Hz |
 | Safety 및 command background jobs | fast periodic path |
 | Battery monitoring | 20 Hz |
 | CRSF telemetry TX | 기본 OFF (`ENABLE_CRSF_TELEMETRY=0`) |
@@ -197,9 +197,22 @@ SB의 MID와 HIGH는 동일한 소프트 랜딩 활성 상태로 처리하므로
 
 세부 추정·보상 항목은 계산 비용과 필요한 응답 속도에 따라 main loop의 분주 주기로 실행합니다.
 
-## test 브랜치 — 2kHz 실행 스케줄 검증 (2026-11-18)
+## Rev 1.3-c — 기능별 실행 주기 정렬과 2kHz 스케줄 검증 (2026-11-18)
 
-**기존 FSM / 제어 기능을 재설계한 것이 아니라, 기존 기능 위에 실행 스케줄을 추가했습니다.** ARMED 상태에서 20ms/40-slot 고정 실행 시점으로 IMU·EKF·PID·Motor 등 기존 작업을 분배합니다.
+**Rev 1.3-b와 Rev 1.3-c의 핵심 차이는 기존 기능의 실행 주기를 맞추는 추가 스케줄입니다.** 기존 FSM과 제어 알고리즘은 변경하지 않고 ARMED 상태의 실행 시점을 20ms/40-slot로 배분합니다.
+
+**Rev 1.3-c 기능별 실행 스케줄 목표 (기존 FSM 유지)**
+
+| 기능 | 목표 주기 |
+| --- | ---: |
+| MainLoop / IMU / Rate PID | 2,000 Hz |
+| Motor / DSHOT | **1,000 Hz 목표 / 별도 실측 995–997 Hz** |
+| EKF / Failsafe / Tilt safety | 500 Hz |
+| Airborne / Slow compensation | 250 Hz |
+| Command target | 200 Hz (20ms 내 4회, 4/6ms 간격) |
+| Output compensation | 100 Hz |
+
+이는 추가 스케줄의 **설정 목표**이며 모든 개별 Deadline 충족을 보장하지는 않습니다. 아래 비교 로그의 Motor 약 974~980Hz는 해당 로그의 루프 기반 출력 카운트이며, 별도로 확인한 995~997Hz DSHOT 실측값과 측정 조건을 구분합니다.
 
 - `FastBackgroundJobs()`는 매 MainLoop(목표 2kHz)마다 ELRS/CRSF `UpdateCommandCache()`와 `HandleCommandEvents()`를 실행합니다. 실제 RF 패킷 도착 주기는 별개입니다.
 - `ProcessSlowBackground()`는 약 10ms마다 배터리·LED·선택형 Telemetry 송신을 점검합니다. 잔여 시간 승인과 최대 대기시간 강제 실행 정책을 사용하며, 강제 작업은 500µs deadline을 초과할 수 있습니다.
@@ -218,7 +231,7 @@ SB의 MID와 HIGH는 동일한 소프트 랜딩 활성 상태로 처리하므로
 
 마지막 두 단일 비행 로그에서 `sch_miss`는 약 1,163회/초에서 941회/초로 감소했습니다. 원인 전체를 TX 비활성화로 확정할 수는 없습니다. 잔여 시간으로 승인한 BG 작업은 계측 표본에서 500µs를 초과하지 않았지만 최대 지연에 의한 강제 BG 작업은 종종 초과했습니다. 정밀 계측 자체가 타이밍을 변경했으므로 실제 비계측 실행 시간과 혼동하지 않아야 합니다.
 
-**검증 상태:** 성능 수치는 코드 정리 이전 로그입니다. 현재 복원한 배터리 CRITICAL fail-safe 및 TX 기본-OFF 설정은 변경 후 빌드·하드웨어·비행 재검증이 필요합니다. 아래 과거 수치는 초기 Rev 1.3-b 조건의 측정값입니다.
+**검증 상태:** 성능 수치는 코드 정리 이전 로그입니다. Rev 1.3-c의 코드 변경 후 빌드·하드웨어·비행 재검증이 필요합니다. 현재 복원한 배터리 CRITICAL fail-safe 및 TX 기본-OFF 설정은 변경 후 빌드·하드웨어·비행 재검증이 필요합니다. 아래 과거 수치는 초기 Rev 1.3-b 조건의 측정값입니다.
 
 ## 과거 측정 결과 (초기 Rev 1.3-b 조건)
 
@@ -268,11 +281,11 @@ ELRS의 빠른 통신 주기 때문에 실제 복구 지연은 비교적 짧지�
 
 ### 4. 위치 및 고도 유지
 
-현재 기체에는 Optical Flow와 ToF가 없어 XY 위치 유지와 절대 고도 유지 기능이 없습니다. 해당 기능은 센서 신뢰도, 바닥 무늬, 조명, 반사율 및 연산 자원을 함께 고려해야 하므로 Rev1.3-b 범위에서 제외했습니다.
+현재 기체에는 Optical Flow와 ToF가 없어 XY 위치 유지와 절대 고도 유지 기능이 없습니다. 해당 기능은 센서 신뢰도, 바닥 무늬, 조명, 반사율 및 연산 자원을 함께 고려해야 하므로 Rev1.3-c 범위에서 제외했습니다.
 
 ## 다음 단계 — Rev2
 
-Rev1.3-b는 ESP32-S3 기반 Rev1.x의 현재 안정화 지점입니다. 다음 하드웨어 revision은 STM32 기반으로 전환하며 다음 항목을 목표로 합니다.
+Rev1.3-c는 ESP32-S3 기반 Rev1.x의 실행 주기 정렬·검증 단계입니다. 다음 하드웨어 revision은 STM32 기반으로 전환하며 다음 항목을 목표로 합니다.
 
 - 2 kHz 이상 비행 제어 주기의 안정적 확보
 - non-blocking motor output 및 timing margin 개선
@@ -285,26 +298,26 @@ Rev1.3-b는 ESP32-S3 기반 Rev1.x의 현재 안정화 지점입니다. 다음 �
 
 <a id="english"></a>
 
-# ESP32-S3 Drone Firmware — Rev 1.3-b
+# ESP32-S3 Drone Firmware — Rev 1.3-c
 
-> Flight-control firmware for a 2.5-inch quadcopter based on the Seeed Studio XIAO ESP32-S3. Rev 1.3-b is the current stabilized and outdoor-tested Rev1.x release, replacing the custom ESP-NOW controller link with ELRS/CRSF and finalizing the transmitter input and safety workflow.
+> Flight-control firmware for a 2.5-inch quadcopter based on the Seeed Studio XIAO ESP32-S3. Rev 1.3-c adds execution scheduling to align the rates of the existing flight-control functions without redesigning the FSM. ELRS/CRSF integration and outdoor flight validation were established in Rev 1.3-b.
 
 ## Overview
 
 The firmware integrates sensor acquisition, attitude estimation, PID control, a flight-state machine, thrust compensation, and motor output on a single ESP32-S3 flight controller.
 
-Rev 1.3-b retains the multi-rate control architecture introduced in Rev 1.2 while migrating the control link to a RadioMaster transmitter and ELRS receiver. It integrates CRSF RC input, repeated command delivery, communication timeout handling, and switch-edge detection. Battery/flight-mode telemetry TX remains implemented for future use but is disabled by default in the current `test` configuration.
+Rev 1.3-b migrated the control link to RadioMaster/ELRS/CRSF. Rev 1.3-c retains the existing FSM/control algorithms while adding a 20ms/40-slot scheduler to align their execution rates. It integrates CRSF RC input, repeated command delivery, communication timeout handling, and switch-edge detection. Battery/flight-mode telemetry TX remains implemented for future use but is disabled by default in the current `test` configuration.
 
 ## Current Status
 
 | Item | Status |
 | --- | --- |
-| Current revision | **Rev 1.3-b — ELRS/CRSF stabilization** |
+| Current revision | **Rev 1.3-c — Multi-rate execution scheduling** |
 | Build and basic functions | Verified |
 | RadioMaster/ELRS channel behavior | Verified |
 | Target main control rate | 2 kHz |
 | Measured ARMED rate (`test`, Nov 2026) | Approximately 1,959 Hz (TX/detailed tracing OFF) |
-| Motor/DSHOT output | 1 kHz |
+| Motor/DSHOT output | 1 kHz target / **995–997 Hz** separately measured |
 | Outdoor flight test | **Verified** |
 | Long-range link test | Further validation required |
 
@@ -323,7 +336,7 @@ Rev 1.3-b retains the multi-rate control architecture introduced in Rev 1.2 whil
 
 ## Program Structure
 
-Rev 1.3-b separates the **CRSF receiver task**, **IMU acquisition task**, and **main flight-control task** under FreeRTOS. Communication and sensor data feed the main FSM, which manages safety conditions and the multi-rate flight-control pipeline.
+Rev 1.3-c retains the **CRSF receiver task**, **IMU acquisition task**, and **main flight-control task** under FreeRTOS. Communication and sensor data feed the main FSM, which manages safety conditions and the multi-rate flight-control pipeline.
 
 ### Flight-Control Architecture
 
@@ -353,7 +366,7 @@ flowchart TD
     end
     CMD --> MAIN
     IMUSNAP --> EST
-    MIX --> DSHOT["RMT DSHOT - 1 kHz"] --> ESC["ESC / Four Motors"]
+    MIX --> DSHOT["RMT DSHOT - 1kHz target / 995-997Hz observed"] --> ESC["ESC / Four Motors"]
     BAT -.-> TEL["Optional CRSF Telemetry TX (default OFF)"]
     TEL -.-> RX
 ```
@@ -406,7 +419,7 @@ A transient yaw disturbance was reproducible during rapid descent. No sustained 
 
 The GPS frame (`0x02`) is intentionally excluded. Link Statistics can be received but are not yet used for flight-control decisions. TX is optional and disabled by default; when enabled, it is best-effort.
 
-## Rev 1.3-b Highlights
+## Features Retained from Rev 1.3-b
 
 ### ELRS/CRSF input
 
@@ -460,9 +473,22 @@ After a soft landing, the FC may be DISARMED while SE remains physically HIGH. R
 4. **Thrust compensation** — thrust curve, battery-voltage compensation, high-throttle limiting, and vertical-speed damping
 5. **Mixer / Motor output** — quad mixing, normalization, DSHOT conversion, and RMT output
 
-## test Branch — Additive 2kHz Scheduling Validation (2026-11-18)
+## Rev 1.3-c — Per-Function Rate Alignment and 2kHz Scheduling Validation (2026-11-18)
 
-**The existing FSM and control functions were not redesigned.** A 20ms/40-slot execution schedule was added to distribute the existing IMU, EKF, PID, motor, and related work inside ARMED.
+**The main difference between Rev 1.3-b and Rev 1.3-c is the added execution schedule to align existing function rates.** The FSM and underlying algorithms are unchanged; ARMED work is assigned across 20ms/40 slots.
+
+**Rev 1.3-c nominal per-function rates (existing FSM unchanged)**
+
+| Function | Scheduled target |
+| --- | ---: |
+| MainLoop / IMU / Rate PID | 2,000 Hz |
+| Motor / DSHOT | **1,000 Hz target / 995–997 Hz separately measured** |
+| EKF / failsafe / tilt safety | 500 Hz |
+| Airborne / slow compensation | 250 Hz |
+| Command target | 200 Hz (four executions/20ms; 4/6ms gaps) |
+| Output compensation | 100 Hz |
+
+These are scheduled targets, not hard-deadline guarantees. The ~974–980Hz motor counts in the comparison logs below and the separately observed 995–997Hz DSHOT frequency are from different measurement conditions.
 
 - `FastBackgroundJobs()` runs `UpdateCommandCache()` and `HandleCommandEvents()` every main-loop iteration (2kHz target). The over-the-air RF packet rate is independent of this polling rate.
 - `ProcessSlowBackground()` checks battery, LED, and optional telemetry TX about every 10ms. Admission uses remaining slot time and bounded deferral; forced jobs may violate a 500µs deadline.
@@ -481,7 +507,7 @@ After a soft landing, the FC may be DISARMED while SE remains physically HIGH. R
 
 In the final two single-flight logs, `sch_miss` decreased from ~1,163/s to ~941/s. The comparison does not establish that TX removal alone caused the entire reduction. Slack-admitted BG samples did not exceed 500µs, while bounded-age forced BG jobs frequently did. The detailed tracing itself changed loop timing.
 
-**Validation:** These measurements predate the current code cleanup. The restored battery-critical landing trigger and final telemetry toggle require post-change build and hardware validation. Historical figures below correspond to earlier Rev 1.3-b conditions.
+**Validation:** These measurements predate the current code cleanup. Post-change build and flight verification for Rev 1.3-c is required. The restored battery-critical landing trigger and final telemetry toggle require post-change build and hardware validation. Historical figures below correspond to earlier Rev 1.3-b conditions.
 
 ## Historical Measurements (early Rev 1.3-b conditions)
 
@@ -518,11 +544,11 @@ Planned improvements include type-specific length checks, supported-address/type
 
 ### Position and altitude hold
 
-The current aircraft has no Optical Flow or ToF sensors, so XY position hold and absolute altitude hold are unavailable. These features are outside the Rev 1.3-b scope because they require joint validation of sensor reliability, floor texture, lighting, reflectivity, and processing resources.
+The current aircraft has no Optical Flow or ToF sensors, so XY position hold and absolute altitude hold are unavailable. These features are outside the Rev 1.3-c scope because they require joint validation of sensor reliability, floor texture, lighting, reflectivity, and processing resources.
 
 ## Next Stage — Rev2
 
-Rev 1.3-b is the current stabilization point for the ESP32-S3-based Rev1.x platform. The STM32-based Rev2 design targets:
+Rev 1.3-c is the current execution-rate alignment and validation stage of the ESP32-S3-based Rev1.x platform. The STM32-based Rev2 design targets:
 
 - Stable flight-control rates of 2 kHz or higher
 - Non-blocking motor output and improved timing margin
