@@ -58,7 +58,7 @@
 #define IMU_READ_MODE_FIFO_INTERRUPT      2
 
 #ifndef IMU_READ_MODE
-#define IMU_READ_MODE IMU_READ_MODE_INTERRUPT_LATEST
+#define IMU_READ_MODE IMU_READ_MODE_DIRECT
 #endif
 
 #ifndef IMU_CLEAR_INT_STATUS_AFTER_READ
@@ -101,6 +101,7 @@ enum class IMUState
 struct IMUReadTimingSample
 {
     uint32_t raw_cycles = 0;
+    uint32_t spi_cycles = 0;  // 신규
     uint32_t parse_cycles = 0;
 };
 
@@ -255,7 +256,7 @@ class IMUInterface
         esp_err_t SetSPIHandle(board_handles_t* bhandle);
 
         static void MainTask(void* param);
-        esp_err_t ReadIMUData();
+        esp_err_t ReadIMUData(uint32_t* spi_cycles = nullptr);
         esp_err_t ParseImuData();
         esp_err_t WriteDataToBuffer();
         esp_err_t WriteDataToBuffer(uint32_t frame_sample_count);

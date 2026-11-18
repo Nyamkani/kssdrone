@@ -12,7 +12,7 @@
       "description": "Development configuration",
       "binaryDir": "${sourceDir}/build/default",
       "cacheVariables": {
-        "SDKCONFIG": "${sourceDir}/build/default/sdkconfig"
+        "SDKCONFIG": "${sourceDir}/sdkconfig" 
       }
     },
     {
@@ -21,7 +21,7 @@
       "description": "Production configuration",
       "binaryDir": "${sourceDir}/build/production",
       "cacheVariables": {
-        "SDKCONFIG": "${sourceDir}/build/production/sdkconfig"
+        "SDKCONFIG": "${sourceDir}/sdkconfig"
       }
     }
   ]

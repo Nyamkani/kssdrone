@@ -497,17 +497,32 @@ void KSSDrone::TryPrintArmedProfileStats()
 
 #if IMU_READ_MODE == IMU_READ_MODE_DIRECT
         ESP_LOGI(TAG,
-                 "IMU_PHASE us(avg/max) total=%.2f/%.2f raw=%.2f/%.2f parse=%.2f/%.2f rest=%.2f/%.2f samples=%lu every=%lu",
-                 static_cast<double>(p.sum_cycles) / denom,
-                 static_cast<double>(p.max_cycles) / mhz,
-                 static_cast<double>(p.raw_sum_cycles) / denom,
-                 static_cast<double>(p.raw_max_cycles) / mhz,
-                 static_cast<double>(p.parse_sum_cycles) / denom,
-                 static_cast<double>(p.parse_max_cycles) / mhz,
-                 static_cast<double>(p.remainder_sum_cycles) / denom,
-                 static_cast<double>(p.remainder_max_cycles) / mhz,
-                 static_cast<unsigned long>(p.samples),
-                 static_cast<unsigned long>(IMU_TIMING_SAMPLE_EVERY));
+            "IMU_PHASE us(avg/max) "
+            "total=%.2f/%.2f "
+            "raw=%.2f/%.2f "
+            "spi=%.2f/%.2f "
+            "parse=%.2f/%.2f "
+            "rest=%.2f/%.2f "
+            "samples=%lu every=%lu",
+
+            static_cast<double>(p.sum_cycles) / denom,
+            static_cast<double>(p.max_cycles) / mhz,
+
+            static_cast<double>(p.raw_sum_cycles) / denom,
+            static_cast<double>(p.raw_max_cycles) / mhz,
+
+            static_cast<double>(p.spi_sum_cycles) / denom,
+            static_cast<double>(p.spi_max_cycles) / mhz,
+
+            static_cast<double>(p.parse_sum_cycles) / denom,
+            static_cast<double>(p.parse_max_cycles) / mhz,
+
+            static_cast<double>(p.remainder_sum_cycles) / denom,
+            static_cast<double>(p.remainder_max_cycles) / mhz,
+
+            static_cast<unsigned long>(p.samples),
+            static_cast<unsigned long>(IMU_TIMING_SAMPLE_EVERY)
+        );
 
 #else
         // In interrupt mode raw SPI reads / parsing run inside IMUTask.

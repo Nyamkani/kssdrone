@@ -770,7 +770,7 @@ esp_err_t IMUInterface::Error()
 
 
 
-esp_err_t IMUInterface::ReadIMUData()
+esp_err_t IMUInterface::ReadIMUData(uint32_t* spi_cycles)
 {
     int16_t ax, ay, az, gx, gy, gz, temp;
 
@@ -785,7 +785,8 @@ esp_err_t IMUInterface::ReadIMUData()
         ax, ay, az,
         gx, gy, gz,
         temp,
-        clear_interrupt_status
+        clear_interrupt_status,
+        spi_cycles
     );
 
     if (ret == ESP_OK)
@@ -927,7 +928,8 @@ esp_err_t IMUInterface::GetControlImuFrame(SharedSnapshotFrame<IMU_PARESED_DATA>
 #if IMU_READ_MODE == IMU_READ_MODE_DIRECT
 
     const uint32_t raw_begin = timing ? esp_cpu_get_cycle_count() : 0U;
-    esp_err_t ret = this->ReadIMUData();
+    esp_err_t ret = this->ReadIMUData(
+    timing ? &timing->spi_cycles : nullptr);
     if (timing)
     {
         timing->raw_cycles = static_cast<uint32_t>(esp_cpu_get_cycle_count()) - raw_begin;

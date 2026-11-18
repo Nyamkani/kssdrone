@@ -126,7 +126,7 @@ static constexpr float ARMED_MOTOR_OUTPUT_PERIOD_SEC =
  */
 // ICM42688P configured ODR=8kHz; previously observed UI_DRDY IRQ about 4kHz.
 // Use observed IRQ rate for interrupt-mode divider, not the register ODR.
-#define IMU_SENSOR_DRDY_HZ 4000
+#define IMU_SENSOR_DRDY_HZ 8000
 
 static_assert(
     IMU_SENSOR_DRDY_HZ % MAIN_LOOP_RATE_HZ == 0,

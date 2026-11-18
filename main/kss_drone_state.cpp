@@ -221,6 +221,7 @@ esp_err_t KSSDrone::Armed(const float dt)
     {
         const uint32_t cycles = static_cast<uint32_t>(esp_cpu_get_cycle_count()) - imu_start_cycles;
         const uint32_t raw = imu_phase_timing.raw_cycles;
+        const uint32_t spi = imu_phase_timing.spi_cycles; // 신규
         const uint32_t parse = imu_phase_timing.parse_cycles;
         const uint32_t remainder = cycles >= raw + parse ? cycles - raw - parse : 0U;
         auto& stats = this->imu_timing_;
@@ -228,6 +229,13 @@ esp_err_t KSSDrone::Armed(const float dt)
         if (cycles > stats.max_cycles) stats.max_cycles = cycles;
         stats.raw_sum_cycles += raw;
         if (raw > stats.raw_max_cycles) stats.raw_max_cycles = raw;
+        stats.spi_sum_cycles += spi;
+
+        if (spi > stats.spi_max_cycles)
+        {
+            stats.spi_max_cycles = spi;
+        }
+
         stats.parse_sum_cycles += parse;
         if (parse > stats.parse_max_cycles) stats.parse_max_cycles = parse;
         stats.remainder_sum_cycles += remainder;

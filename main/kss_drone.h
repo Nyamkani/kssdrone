@@ -119,7 +119,7 @@ Landing -> Disarmed
 #define ENABLE_MOTOR_OUTPUT_COUNT 1
 #define PERIODIC_TIMER_USE_FMOD  0  // 1: 기존 fmod, 0: 반복 뺄셈
 #define ENABLE_ARMED_TIMING_PROFILE 0  // legacy multi-stage profiler: disabled
-#define ENABLE_IMU_TIMING_PROFILE 1    // test: IMU-only sampled profiler
+#define ENABLE_IMU_TIMING_PROFILE 0    // test: IMU-only sampled profiler
 #define IMU_TIMING_SAMPLE_EVERY 31U
 #define IMU_TIMING_REPORT_SAMPLES 128U
 #define ARMED_TIMING_SAMPLE_EVERY 17 // non-harmonic with 2/4/8/20 loop subrates
@@ -239,6 +239,8 @@ struct ImuTimingStats
     uint32_t parse_max_cycles = 0;
     uint64_t remainder_sum_cycles = 0;
     uint32_t remainder_max_cycles = 0;
+    uint64_t spi_sum_cycles = 0;
+    uint32_t spi_max_cycles = 0;
 };
 #endif
 
