@@ -260,6 +260,9 @@ enum class DisarmTimingStage : uint8_t
     EKF_PREDICT,
     EKF_UPDATE,
     SLOW_BG,
+    BG_BATTERY,
+    BG_TELEMETRY,
+    BG_LED,
     COUNT
 };
 
@@ -302,9 +305,12 @@ struct DisarmTimingStats
 
     inline void Record(
         DisarmTimingStage stage,
-        uint32_t begin_cycles)
+        uint32_t begin_cycles,
+        bool force = false)
     {
-        if (!sampling)
+        // force: count every DISARMED slow-background event, including
+        // battery/telemetry calls that a 1-in-31 sample could miss.
+        if (!sampling && !force)
         {
             return;
         }
