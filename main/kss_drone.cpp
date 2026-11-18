@@ -178,7 +178,15 @@ void KSSDrone::ResetGyroBiasAccumulator()
 void KSSDrone::UpdateEkfReady(const float dt)
 {
     IMU_PARESED_DATA imu_data{};
-    if (this->imu_interface_.GetParsedIMURadsData(imu_data) != ESP_OK)
+
+#if ENABLE_DISARM_TIMING_PROFILE
+    const uint32_t imu_begin = this->disarm_timing_.Mark();
+#endif
+    const esp_err_t imu_ret = this->imu_interface_.GetParsedIMURadsData(imu_data);
+#if ENABLE_DISARM_TIMING_PROFILE
+    this->disarm_timing_.Record(DisarmTimingStage::IMU, imu_begin);
+#endif
+    if (imu_ret != ESP_OK)
     {
         this->ekf_ready_ = false;
         this->ekf_ready_dt_ = 0.0f;
@@ -199,10 +207,24 @@ void KSSDrone::UpdateEkfReady(const float dt)
         imu_data.ay_g * imu_data.ay_g +
         imu_data.az_g * imu_data.az_g);
 
+#if ENABLE_DISARM_TIMING_PROFILE
+    const uint32_t predict_begin = this->disarm_timing_.Mark();
+#endif
     this->ekf_.Predict(ekf_input);
+#if ENABLE_DISARM_TIMING_PROFILE
+    this->disarm_timing_.Record(DisarmTimingStage::EKF_PREDICT,
+                               predict_begin);
+#endif
     if (acc_norm >= IMU_WRONG_DATA_MIN && acc_norm <= IMU_WRONG_DATA_MAX)
     {
+#if ENABLE_DISARM_TIMING_PROFILE
+        const uint32_t update_begin = this->disarm_timing_.Mark();
+#endif
         this->ekf_.Update(ekf_input);
+#if ENABLE_DISARM_TIMING_PROFILE
+        this->disarm_timing_.Record(DisarmTimingStage::EKF_UPDATE,
+                                   update_begin);
+#endif
     }
 
     const bool gyro_stable =
@@ -358,6 +380,77 @@ void KSSDrone::TryPrintMainLoopStats()
 #endif
 }
 
+
+void KSSDrone::TryPrintDisarmTimingStats()
+{
+#if ENABLE_DISARM_TIMING_PROFILE
+    auto& prof = this->disarm_timing_;
+    if (prof.sampled_loops < DISARM_TIMING_REPORT_SAMPLES)
+    {
+        return;
+    }
+
+    constexpr double cpu_mhz =
+        static_cast<double>(CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
+
+    const auto avg_us = [&prof](DisarmTimingStage stage) -> double
+    {
+        const auto& p = prof.stages[static_cast<size_t>(stage)];
+        return p.count
+            ? static_cast<double>(p.sum_cycles) /
+                (static_cast<double>(p.count) * cpu_mhz)
+            : 0.0;
+    };
+
+    const auto max_us = [&prof](DisarmTimingStage stage) -> double
+    {
+        const auto& p = prof.stages[static_cast<size_t>(stage)];
+        return static_cast<double>(p.max_cycles) / cpu_mhz;
+    };
+
+    const auto count = [&prof](DisarmTimingStage stage) -> unsigned long
+    {
+        return static_cast<unsigned long>(
+            prof.stages[static_cast<size_t>(stage)].count);
+    };
+
+    ESP_LOGI(TAG,
+        "DISARM_TIMING WORK us(avg/max,n) "
+        "body=%.2f/%.2f(%lu) "
+        "fastbg=%.2f/%.2f(%lu) "
+        "disarm=%.2f/%.2f(%lu) "
+        "slowbg=%.2f/%.2f(%lu)",
+        avg_us(DisarmTimingStage::BODY_WORK),
+        max_us(DisarmTimingStage::BODY_WORK),
+        count(DisarmTimingStage::BODY_WORK),
+        avg_us(DisarmTimingStage::FAST_BG),
+        max_us(DisarmTimingStage::FAST_BG),
+        count(DisarmTimingStage::FAST_BG),
+        avg_us(DisarmTimingStage::DISARMED),
+        max_us(DisarmTimingStage::DISARMED),
+        count(DisarmTimingStage::DISARMED),
+        avg_us(DisarmTimingStage::SLOW_BG),
+        max_us(DisarmTimingStage::SLOW_BG),
+        count(DisarmTimingStage::SLOW_BG));
+
+    ESP_LOGI(TAG,
+        "DISARM_TIMING EKF us(avg/max,n) "
+        "imu=%.2f/%.2f(%lu) "
+        "predict=%.2f/%.2f(%lu) "
+        "update=%.2f/%.2f(%lu)",
+        avg_us(DisarmTimingStage::IMU),
+        max_us(DisarmTimingStage::IMU),
+        count(DisarmTimingStage::IMU),
+        avg_us(DisarmTimingStage::EKF_PREDICT),
+        max_us(DisarmTimingStage::EKF_PREDICT),
+        count(DisarmTimingStage::EKF_PREDICT),
+        avg_us(DisarmTimingStage::EKF_UPDATE),
+        max_us(DisarmTimingStage::EKF_UPDATE),
+        count(DisarmTimingStage::EKF_UPDATE));
+
+    prof.ResetWindow();
+#endif
+}
 
 void KSSDrone::TryPrintArmedProfileStats()
 {
