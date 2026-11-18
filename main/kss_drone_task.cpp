@@ -85,6 +85,19 @@ void KSSDrone::MainLoop()
                 previous_slow_bg, previous_main_log);
         }
 #endif
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        // This start-to-start gap belongs to the previous ARMED slot.
+        // Exclude deliberate vTaskDelay(1) from normal-gap statistics.
+        if (has_previous_loop && this->armed_slot_capture_ &&
+            previous_slot < KssArmedSchedule::kSlotCount &&
+            previous_wait == WaitCause::NORMAL)
+        {
+            const float raw_gap_us = raw_dt * 1000000.0f;
+            if (raw_gap_us >= 0.0f)
+                this->armed_slot_active_[previous_slot].ObserveNormalGap(
+                    static_cast<uint32_t>(raw_gap_us + 0.5f));
+        }
+#endif
         this->UpdateMainLoopStats(raw_dt);
         // Captured flight statistics do not count as serial output.
         const bool this_loop_main_log = this->TryPrintMainLoopStats();
@@ -114,7 +127,14 @@ void KSSDrone::MainLoop()
             this->state_ == DroneState::ARMED
                 ? this->armed_fixed_slot_ : 0xFFFFU;
         bool this_slow_bg = false;
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        const int64_t fast_bg_begin_us = esp_timer_get_time();
+#endif
         ret = this->FastBackgroundJobs(dt);
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        const int64_t fast_bg_end_us = esp_timer_get_time();
+        bool ran_armed_slot = false;
+#endif
 #if ENABLE_DISARM_TIMING_PROFILE
         this->disarm_timing_.Record(DisarmTimingStage::FAST_BG,
                                    disarm_fast_bg_begin);
@@ -171,6 +191,9 @@ void KSSDrone::MainLoop()
                 break;
 
             case DroneState::ARMED:
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+                ran_armed_slot = true;
+#endif
 #if ENABLE_ARMED_TIMING_PROFILE
                 {
                     const uint32_t prof_armed = this->armed_prof_.Mark();
@@ -202,6 +225,9 @@ void KSSDrone::MainLoop()
                 break;
         }
 
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        const int64_t armed_end_us = esp_timer_get_time();
+#endif
         this->slow_bg_dt_accum_ += dt;
         if (this->slow_bg_dt_accum_ >= BACKGROUND_SLOW_JOB_TIME)
         {
@@ -262,11 +288,23 @@ void KSSDrone::MainLoop()
             ++this->disarm_timing_.sampled_loops;
         }
 #endif
-        // Work timing stops before WDT guard/yield and before deadline wait.
-        // Thus a 2ms gap with 200us work is not a 2ms function execution.
+        // Work timing stops before WDT guard/yield and deadline wait.
+        // Instrumentation adds small overhead but performs no serial I/O.
         const int64_t pre_wait_us = esp_timer_get_time();
         const uint32_t this_work_us =
             static_cast<uint32_t>(pre_wait_us - loop_start_us);
+#if ENABLE_ARMED_SLOT_TIMING_PROFILE
+        if (ran_armed_slot && this->armed_slot_capture_ &&
+            this_slot < KssArmedSchedule::kSlotCount)
+        {
+            this->armed_slot_active_[this_slot].ObserveWork(
+                this_work_us,
+                static_cast<uint32_t>(fast_bg_begin_us - loop_start_us),
+                static_cast<uint32_t>(fast_bg_end_us - fast_bg_begin_us),
+                static_cast<uint32_t>(armed_end_us - fast_bg_end_us),
+                static_cast<uint32_t>(pre_wait_us - armed_end_us));
+        }
+#endif
 #if MAIN_LOOP_RATE_HZ > 1000
         if (this->state_ == DroneState::ARMED)
         {
