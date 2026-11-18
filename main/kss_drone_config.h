@@ -124,7 +124,9 @@ static constexpr float ARMED_MOTOR_OUTPUT_PERIOD_SEC =
  * IMU interrupt_latest용 divider.
  * direct read 모드에서는 사용하지 않아도 된다.
  */
-#define IMU_SENSOR_DRDY_HZ 8000
+// ICM42688P configured ODR=8kHz; previously observed UI_DRDY IRQ about 4kHz.
+// Use observed IRQ rate for interrupt-mode divider, not the register ODR.
+#define IMU_SENSOR_DRDY_HZ 4000
 
 static_assert(
     IMU_SENSOR_DRDY_HZ % MAIN_LOOP_RATE_HZ == 0,
