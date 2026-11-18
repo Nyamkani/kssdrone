@@ -231,7 +231,7 @@ SB의 MID와 HIGH는 동일한 소프트 랜딩 활성 상태로 처리하므로
 
 마지막 두 단일 비행 로그에서 `sch_miss`는 약 1,163회/초에서 941회/초로 감소했습니다. 원인 전체를 TX 비활성화로 확정할 수는 없습니다. 잔여 시간으로 승인한 BG 작업은 계측 표본에서 500µs를 초과하지 않았지만 최대 지연에 의한 강제 BG 작업은 종종 초과했습니다. 정밀 계측 자체가 타이밍을 변경했으므로 실제 비계측 실행 시간과 혼동하지 않아야 합니다.
 
-**검증 상태:** 성능 수치는 코드 정리 이전 로그입니다. Rev 1.3-c의 코드 변경 후 빌드·하드웨어·비행 재검증이 필요합니다. 현재 복원한 배터리 CRITICAL fail-safe 및 TX 기본-OFF 설정은 변경 후 빌드·하드웨어·비행 재검증이 필요합니다. 아래 과거 수치는 초기 Rev 1.3-b 조건의 측정값입니다.
+**검증 상태:** 위 성능 수치는 코드 정리 이전 로그입니다. Rev 1.3-c 변경 후 빌드·하드웨어·비행 재검증이 필요하며, 특히 복원된 배터리 CRITICAL Fail-safe는 별도 안전 테스트가 필요합니다. 아래 과거 수치는 초기 Rev 1.3-b 조건의 측정값입니다.
 
 ## 과거 측정 결과 (초기 Rev 1.3-b 조건)
 
@@ -507,7 +507,7 @@ These are scheduled targets, not hard-deadline guarantees. The ~974–980Hz moto
 
 In the final two single-flight logs, `sch_miss` decreased from ~1,163/s to ~941/s. The comparison does not establish that TX removal alone caused the entire reduction. Slack-admitted BG samples did not exceed 500µs, while bounded-age forced BG jobs frequently did. The detailed tracing itself changed loop timing.
 
-**Validation:** These measurements predate the current code cleanup. Post-change build and flight verification for Rev 1.3-c is required. The restored battery-critical landing trigger and final telemetry toggle require post-change build and hardware validation. Historical figures below correspond to earlier Rev 1.3-b conditions.
+**Validation:** These measurements predate the code cleanup. Rev 1.3-c requires post-change build and hardware/flight validation, including a separate safe test for the restored battery-critical landing trigger. Historical figures below are from earlier Rev 1.3-b conditions.
 
 ## Historical Measurements (early Rev 1.3-b conditions)
 
