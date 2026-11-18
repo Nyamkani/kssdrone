@@ -133,6 +133,18 @@ Landing -> Disarmed
 #define BACKGROUND_SLOW_JOB_TIME   0.010f
 #define ARMED_SLOW_COMP_TIME       0.004f
 
+// Admission estimates (not measured WCET): used only for ARMED/LANDING.
+// When no slot has enough slack, bounded-age jobs execute at the next
+// scheduler opportunity even if they exceed the 500us control deadline.
+#define BG_BATTERY_BUDGET_US        650LL
+#define BG_TELEMETRY_BUDGET_US      240LL
+#define BG_LED_BUDGET_US             90LL
+#define BG_DETAIL_LOG_BUDGET_US     300LL
+#define BG_BATTERY_MAX_GAP_S       0.070f  // nominal 50ms, forced at ~70ms
+#define BG_TELEMETRY_MAX_GAP_S     0.300f  // nominal 100ms
+#define BG_LED_MAX_GAP_S           0.100f  // nominal 10ms
+#define BG_DETAIL_LOG_MAX_GAP_S    0.300f
+
 #define COMMAND_TIMEOUT_US    200000LL
 
 // Sampled, read-only timing profiler. The core is pinned; 32-bit cycle subtraction
@@ -423,6 +435,21 @@ struct PeriodicTimer
     }
 };
 
+struct BackgroundScheduleStats
+{
+    uint32_t battery_deferred = 0;
+    uint32_t telemetry_deferred = 0;
+    uint32_t led_deferred = 0;
+    uint32_t battery_forced = 0;
+    uint32_t telemetry_forced = 0;
+    uint32_t led_forced = 0;
+    uint32_t battery_max_gap_us = 0;
+    uint32_t telemetry_max_gap_us = 0;
+    uint32_t led_max_gap_us = 0;
+
+    void Reset() { *this = {}; }
+};
+
 class KSSDrone
 {
     public:
@@ -462,6 +489,8 @@ class KSSDrone
         float arming_check_dt_ = 0.0f;
         float telemetry_send_dt_ = 0.0f;
         float log_send_dt_ = 0.0f;
+        float led_update_dt_ = 0.0f;
+        BackgroundScheduleStats bg_schedule_stats_{};
 
         //test
         float test_log_dt_ = 0.0f;
@@ -697,10 +726,13 @@ class KSSDrone
         esp_err_t SetBHandle(board_handles_t bhandle);
 
 
-        //Jobs
-        esp_err_t BackgroundJobs(const float dt);
+        // Jobs: safety path is unconditional; slow jobs are budget-admitted.
         esp_err_t FastBackgroundJobs(const float dt);
-        esp_err_t SlowBackgroundJobs(const float dt);
+        esp_err_t ProcessSlowBackground(float dt, int64_t deadline_us);
+        esp_err_t BatteryBackgroundJob(float actual_dt);
+        esp_err_t TelemetryBackgroundJob();
+        void LedBackgroundJob(float actual_dt);
+        void DetailLogBackgroundJob();
 
         //armed
         void LoadArmedContextCache(ArmedContext& ctx);
