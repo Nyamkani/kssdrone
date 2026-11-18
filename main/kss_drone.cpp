@@ -343,6 +343,7 @@ void KSSDrone::TryPrintMainLoopStats()
     ESP_LOGI(TAG,
         "KSS loop state=%d hz=%lu avg=%.3fms min=%.3fms max=%.3fms "
         "over2=%lu over5=%lu over10=%lu wdt=%lu motor=%lu "
+        "sch_miss=%lu sch_late_max=%luus "
         "imu=%lu/%lu/%lu age=%.1f/%lld/%lldus "
         "seq_d=0:%lu 1:%lu 2:%lu 3p:%lu last=%lu/%lu",
 
@@ -357,6 +358,8 @@ void KSSDrone::TryPrintMainLoopStats()
         this->loop_stats_.over_10ms,
         this->loop_stats_.wdt_guard,   // 반드시 여기
         static_cast<unsigned long>(this->motor_output_count_),
+        static_cast<unsigned long>(this->armed_fixed_deadline_miss_),
+        static_cast<unsigned long>(this->armed_fixed_max_late_us_),
 
         this->imu_frame_stats_.frame_count,
         this->imu_frame_stats_.invalid_count,
@@ -374,6 +377,7 @@ void KSSDrone::TryPrintMainLoopStats()
         this->imu_frame_stats_.last_seq_for_log,
         this->imu_frame_stats_.last_sample_count
     );
+#if ENABLE_BG_SCHED_STATS_LOG
     const auto& bg = this->bg_schedule_stats_;
     if (bg.battery_deferred || bg.telemetry_deferred || bg.led_deferred ||
         bg.battery_forced || bg.telemetry_forced || bg.led_forced)
@@ -392,7 +396,10 @@ void KSSDrone::TryPrintMainLoopStats()
             static_cast<unsigned long>(bg.telemetry_max_gap_us / 1000U),
             static_cast<unsigned long>(bg.led_max_gap_us / 1000U));
     }
+#endif
     this->bg_schedule_stats_.Reset();
+    this->armed_fixed_deadline_miss_ = 0U;
+    this->armed_fixed_max_late_us_ = 0U;
     this->loop_stats_.Reset();
     this->imu_frame_stats_.ResetKeepLastSeq();
     this->motor_output_count_ = 0;
