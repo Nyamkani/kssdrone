@@ -18,7 +18,7 @@ Rev 1.3-b에서는 Rev 1.2의 multi-rate 비행 제어 구조를 유지하면서
 | 빌드 및 기본 기능 | 확인 완료 |
 | RadioMaster/ELRS 채널 동작 | 확인 완료 |
 | 목표 main control rate | 2 kHz |
-| ARMED 상태 실측 주기 | 약 1,850–1,870 Hz |
+| ARMED 상태 실측 주기 (`test`, 2026-11) | 약 1,959 Hz (TX·정밀 계측 OFF) |
 | Motor/DSHOT 출력 | 1 kHz |
 | 실제 야외 비행 | **검증 완료** |
 | 장거리 통신 범위 | 추가 검증 필요 |
@@ -69,14 +69,14 @@ flowchart TD
     CMD --> MAIN
     IMUSNAP --> EST
     MIX --> DSHOT["RMT DSHOT - 1 kHz"] --> ESC["ESC / Four Motors"]
-    BAT --> TEL["Battery + Flight Mode Telemetry"]
-    TEL --> RX
+    BAT -.-> TEL["Optional CRSF Telemetry TX (default OFF)"]
+    TEL -.-> RX
 ```
 
 - **입력 및 공유:** CRSF 채널·명령을 수신하여 SharedSnapshot에 저장하며, IMU 데이터는 별도 센서 Task에서 취득합니다.
 - **FSM 및 안전:** 비행 제어 Main Task가 명령·통신 timeout·failsafe·landing·emergency stop을 처리합니다.
 - **자세 제어:** quaternion 기반 자세 추정, Rate/Angle 제어, PID, 추력 보정 및 4모터 믹싱을 실행합니다.
-- **출력 및 Telemetry:** RMT 기반 DSHOT으로 ESC를 제어하고 배터리·비행 모드 정보를 CRSF로 송신합니다.
+- **출력 및 Telemetry:** RMT 기반 DSHOT으로 ESC를 제어합니다. CRSF 배터리·비행 모드 TX 구현은 보존하지만 `test` 브랜치에서는 기본 비활성화합니다.
 
 ## 하드웨어 및 비행 테스트 미디어
 
@@ -119,7 +119,7 @@ flowchart TD
 | TX | `0x08 Battery Sensor` | 필터링된 배터리 전압 및 상태 송신 |
 | TX | `0x21 Flight Mode` | 현재 비행 모드 송신 |
 
-GPS frame(`0x02`)은 현재 구현 범위에서 제외했습니다. Link Statistics는 수신할 수 있지만 아직 비행 제어 판단에는 사용하지 않습니다. Telemetry는 비행 제어를 중단시키지 않는 best-effort 경로로 처리합니다.
+GPS frame(`0x02`)은 현재 구현 범위에서 제외했습니다. Link Statistics는 수신할 수 있지만 아직 비행 제어 판단에는 사용하지 않습니다. TX는 향후 기능으로 보존하며 기본 OFF입니다. 활성화하더라도 best-effort 경로로 처리합니다.
 
 ## Rev 1.3-b 주요 변경점
 
@@ -163,7 +163,7 @@ SB의 MID와 HIGH는 동일한 소프트 랜딩 활성 상태로 처리하므로
 
 - 새 명령을 동일한 `cmd_seq`와 `cmd_flags`로 5회 반복 전송
 - FC는 `cmd_seq`로 동일 명령의 반복 frame을 한 번만 실행
-- Battery Sensor와 Flight Mode telemetry를 각각 5 Hz로 송신
+- Battery Sensor와 Flight Mode TX 구현을 보존하며 현재 기본 OFF (활성화 시 기존 주기 사용)
 - Telemetry 송신 실패는 비행 제어 상태를 변경하지 않음
 - 필터링된 배터리 전압과 배터리 상태를 telemetry에 반영
 
@@ -192,12 +192,35 @@ SB의 MID와 HIGH는 동일한 소프트 랜딩 활성 상태로 처리하므로
 | Motor / DSHOT output | 1 kHz |
 | Safety 및 command background jobs | fast periodic path |
 | Battery monitoring | 20 Hz |
-| CRSF telemetry 합계 | 10 Hz |
-| Battery / Flight mode telemetry | 각각 5 Hz |
+| CRSF telemetry TX | 기본 OFF (`ENABLE_CRSF_TELEMETRY=0`) |
+| Telemetry 활성화 시 | 기존 10 Hz 목표 송신 스케줄 |
 
 세부 추정·보상 항목은 계산 비용과 필요한 응답 속도에 따라 main loop의 분주 주기로 실행합니다.
 
-## 측정 결과
+## test 브랜치 — 2kHz 실행 스케줄 검증 (2026-11-18)
+
+**기존 FSM / 제어 기능을 재설계한 것이 아니라, 기존 기능 위에 실행 스케줄을 추가했습니다.** ARMED 상태에서 20ms/40-slot 고정 실행 시점으로 IMU·EKF·PID·Motor 등 기존 작업을 분배합니다.
+
+- `FastBackgroundJobs()`는 매 MainLoop(목표 2kHz)마다 ELRS/CRSF `UpdateCommandCache()`와 `HandleCommandEvents()`를 실행합니다. 실제 RF 패킷 도착 주기는 별개입니다.
+- `ProcessSlowBackground()`는 약 10ms마다 배터리·LED·선택형 Telemetry 송신을 점검합니다. 잔여 시간 승인과 최대 대기시간 강제 실행 정책을 사용하며, 강제 작업은 500µs deadline을 초과할 수 있습니다.
+- **배터리 Fail-safe 복원:** 8회 ADC 샘플링 `BatteryMonitor::Update()`를 유지하고, ARMED의 `ArmedFailsafeFast()`에서 `BatteryState::CRITICAL` 시 `LANDING(FAILSAFE)`로 전환합니다. CRSF 송신과 무관한 안전 경로입니다.
+- **Telemetry 선택 기능:** 현재 조종기는 Telemetry를 소비하지 않으므로 `ENABLE_CRSF_TELEMETRY=0`을 기본값으로 합니다. TX 구현은 보존하고, 비활성 시 송신 스케줄과 불필요한 BG 선점도 제외합니다. 수신과 안전 이벤트 경로는 그대로 유지합니다.
+- **진단 기본값:** `ENABLE_ARMED_SLOT_TIMING_PROFILE=0`. 매 반복 정밀 계측은 주파수에 영향을 주므로 비행 기본 설정에서 끕니다. 기존 `KSS loop`·`GAP_CAUSE` 1Hz RAM 버퍼링은 유지합니다.
+
+| ARMED 테스트 조건 | Main Loop | Motor |
+| --- | ---: | ---: |
+| Battery ON / Slot 계측 ON | 약 1,946 Hz | 약 973 Hz |
+| Battery OFF / Slot 계측 ON | 약 1,968 Hz | 약 984 Hz |
+| Battery ON / Slot+BG 계측 ON | 약 1,752 Hz | 약 876 Hz |
+| Battery OFF / Slot+BG 계측 ON | 약 1,864 Hz | 약 932 Hz |
+| Battery ON / 정밀 계측 OFF / Telemetry TX ON | 약 1,949 Hz | 약 974 Hz |
+| **Battery ON / 정밀 계측 OFF / Telemetry TX OFF** | **약 1,959 Hz** | **약 980 Hz** |
+
+마지막 두 단일 비행 로그에서 `sch_miss`는 약 1,163회/초에서 941회/초로 감소했습니다. 원인 전체를 TX 비활성화로 확정할 수는 없습니다. 잔여 시간으로 승인한 BG 작업은 계측 표본에서 500µs를 초과하지 않았지만 최대 지연에 의한 강제 BG 작업은 종종 초과했습니다. 정밀 계측 자체가 타이밍을 변경했으므로 실제 비계측 실행 시간과 혼동하지 않아야 합니다.
+
+**검증 상태:** 성능 수치는 코드 정리 이전 로그입니다. 현재 복원한 배터리 CRITICAL fail-safe 및 TX 기본-OFF 설정은 변경 후 빌드·하드웨어·비행 재검증이 필요합니다. 아래 과거 수치는 초기 Rev 1.3-b 조건의 측정값입니다.
+
+## 과거 측정 결과 (초기 Rev 1.3-b 조건)
 
 | Control link | ARMED 상태 main loop |
 | --- | ---: |
@@ -207,7 +230,7 @@ SB의 MID와 HIGH는 동일한 소프트 랜딩 활성 상태로 처리하므로
 - CRSF 전환 후 약 30 Hz, 약 1.6%의 추가 처리 비용이 확인되었습니다.
 - 목표 2 kHz 대비 현재 평균 loop time은 약 535–541 μs입니다.
 - 통신 변경 자체의 영향은 작으며, 2 kHz 미달의 주원인은 ESP32-S3에서 센서 처리, 추정, 제어, 상태 머신과 통신을 함께 수행하는 전체 연산 부하입니다.
-- 현재 Rev1.x에서는 약 1.85–1.87 kHz를 실용적인 안정 동작 범위로 사용합니다.
+- 이 수치는 초기 테스트 조건의 참고값이며, 최신 `test` 측정 기준은 위 표에 별도로 기록합니다.
 
 ## 알려진 한계 및 향후 개선
 
@@ -238,7 +261,7 @@ ELRS의 빠른 통신 주기 때문에 실제 복구 지연은 비교적 짧지�
 
 ### 3. ESP32-S3 timing margin
 
-- 목표 2 kHz에 비해 실제 main loop는 약 1,850–1,870 Hz입니다.
+- 최신 `test` 측정에서 약 1,959 Hz가 관측됐지만 개별 500µs deadline miss는 계속 발생합니다.
 - blocking RMT DSHOT 출력은 여전히 큰 시간 제약입니다.
 - 4 kHz control loop는 현재 구조에서 현실적으로 어렵습니다.
 - 확실한 2 kHz 이상 주기와 추가 센서 처리는 STM32 기반 Rev2에서 진행할 예정입니다.
@@ -280,7 +303,7 @@ Rev 1.3-b retains the multi-rate control architecture introduced in Rev 1.2 whil
 | Build and basic functions | Verified |
 | RadioMaster/ELRS channel behavior | Verified |
 | Target main control rate | 2 kHz |
-| Measured ARMED rate | Approximately 1,850–1,870 Hz |
+| Measured ARMED rate (`test`, Nov 2026) | Approximately 1,959 Hz (TX/detailed tracing OFF) |
 | Motor/DSHOT output | 1 kHz |
 | Outdoor flight test | **Verified** |
 | Long-range link test | Further validation required |
@@ -331,14 +354,14 @@ flowchart TD
     CMD --> MAIN
     IMUSNAP --> EST
     MIX --> DSHOT["RMT DSHOT - 1 kHz"] --> ESC["ESC / Four Motors"]
-    BAT --> TEL["Battery + Flight Mode Telemetry"]
-    TEL --> RX
+    BAT -.-> TEL["Optional CRSF Telemetry TX (default OFF)"]
+    TEL -.-> RX
 ```
 
 - **Input and data sharing:** The CRSF task receives RC channels and commands through SharedSnapshot while a separate IMU task acquires sensor data.
 - **FSM and safety:** The main flight-control task handles commands, communication timeout, failsafe, landing, and emergency stop.
 - **Attitude control:** Quaternion-based estimation, Rate/Angle control, PID, thrust compensation, and four-motor mixing form the flight-control pipeline.
-- **Output and telemetry:** RMT-based DSHOT drives the ESCs; battery and flight-mode telemetry is sent over CRSF.
+- **Output and telemetry:** RMT-based DSHOT drives the ESCs. CRSF battery/flight-mode TX is retained but default-disabled on `test`.
 
 ## Hardware and Flight-Test Media
 
@@ -381,7 +404,7 @@ A transient yaw disturbance was reproducible during rapid descent. No sustained 
 | TX | `0x08 Battery Sensor` | Transmit filtered battery voltage and state |
 | TX | `0x21 Flight Mode` | Transmit the current flight mode |
 
-The GPS frame (`0x02`) is intentionally excluded. Link Statistics can be received but are not yet used for flight-control decisions. Telemetry is handled as a best-effort path and cannot stop flight control.
+The GPS frame (`0x02`) is intentionally excluded. Link Statistics can be received but are not yet used for flight-control decisions. TX is optional and disabled by default; when enabled, it is best-effort.
 
 ## Rev 1.3-b Highlights
 
@@ -425,7 +448,7 @@ After a soft landing, the FC may be DISARMED while SE remains physically HIGH. R
 
 - Repeats each new command five times with the same `cmd_seq` and `cmd_flags`
 - The FC executes repeated frames only once by de-duplicating `cmd_seq`
-- Sends Battery Sensor and Flight Mode telemetry at 5 Hz each
+- Retains Battery Sensor / Flight Mode telemetry TX for future use; default OFF
 - Telemetry failures do not alter the flight state
 - Reports filtered battery voltage and battery state through telemetry
 
@@ -437,7 +460,30 @@ After a soft landing, the FC may be DISARMED while SE remains physically HIGH. R
 4. **Thrust compensation** — thrust curve, battery-voltage compensation, high-throttle limiting, and vertical-speed damping
 5. **Mixer / Motor output** — quad mixing, normalization, DSHOT conversion, and RMT output
 
-## Measured Performance
+## test Branch — Additive 2kHz Scheduling Validation (2026-11-18)
+
+**The existing FSM and control functions were not redesigned.** A 20ms/40-slot execution schedule was added to distribute the existing IMU, EKF, PID, motor, and related work inside ARMED.
+
+- `FastBackgroundJobs()` runs `UpdateCommandCache()` and `HandleCommandEvents()` every main-loop iteration (2kHz target). The over-the-air RF packet rate is independent of this polling rate.
+- `ProcessSlowBackground()` checks battery, LED, and optional telemetry TX about every 10ms. Admission uses remaining slot time and bounded deferral; forced jobs may violate a 500µs deadline.
+- **Restored battery fail-safe:** Keep the eight-ADC-sample `BatteryMonitor::Update()`. In ARMED, `ArmedFailsafeFast()` enters `LANDING(FAILSAFE)` when `BatteryState::CRITICAL`. This safety path is independent of CRSF TX.
+- **Optional TX:** `ENABLE_CRSF_TELEMETRY=0` disables unused transmission/scheduling by default, preserving the TX implementation. ELRS command RX and safety events remain enabled.
+- **Diagnostics:** `ENABLE_ARMED_SLOT_TIMING_PROFILE=0` disables costly per-slot/BG tracing by default. 1Hz KSS loop/gap reports remain buffered during ARMED and printed after disarm.
+
+| ARMED test configuration | Main Loop | Motor |
+| --- | ---: | ---: |
+| Battery ON / slot tracing ON | ~1,946 Hz | ~973 Hz |
+| Battery OFF / slot tracing ON | ~1,968 Hz | ~984 Hz |
+| Battery ON / slot+BG tracing ON | ~1,752 Hz | ~876 Hz |
+| Battery OFF / slot+BG tracing ON | ~1,864 Hz | ~932 Hz |
+| Battery ON / detailed tracing OFF / telemetry TX ON | ~1,949 Hz | ~974 Hz |
+| **Battery ON / detailed tracing OFF / telemetry TX OFF** | **~1,959 Hz** | **~980 Hz** |
+
+In the final two single-flight logs, `sch_miss` decreased from ~1,163/s to ~941/s. The comparison does not establish that TX removal alone caused the entire reduction. Slack-admitted BG samples did not exceed 500µs, while bounded-age forced BG jobs frequently did. The detailed tracing itself changed loop timing.
+
+**Validation:** These measurements predate the current code cleanup. The restored battery-critical landing trigger and final telemetry toggle require post-change build and hardware validation. Historical figures below correspond to earlier Rev 1.3-b conditions.
+
+## Historical Measurements (early Rev 1.3-b conditions)
 
 | Control link | ARMED main loop |
 | --- | ---: |
@@ -447,7 +493,7 @@ After a soft landing, the FC may be DISARMED while SE remains physically HIGH. R
 - The CRSF migration reduced the measured main-loop rate by roughly 30 Hz, or about 1.6%.
 - The current mean loop time is approximately 535–541 μs against the 500 μs target.
 - The control-link overhead is small; the main limitation is the total ESP32-S3 workload from sensing, estimation, control, state handling, and communication.
-- Rev1.x therefore uses approximately 1.85–1.87 kHz as its practical stable operating range.
+- These are historical results from earlier test conditions; the updated `test` measurement is shown above.
 
 ## Known Limitations and Planned Improvements
 
@@ -465,7 +511,7 @@ Planned improvements include type-specific length checks, supported-address/type
 
 ### ESP32-S3 timing margin
 
-- The measured 1,850–1,870 Hz main loop remains below the 2 kHz target.
+- Recent `test` logs show ~1,959 Hz with detailed tracing and telemetry TX disabled, but individual 500µs deadlines can still be missed.
 - Blocking RMT DSHOT output is still a major timing constraint.
 - A 4 kHz control loop is impractical with the current architecture.
 - Stable 2 kHz-or-higher control and additional sensor processing are deferred to the STM32-based Rev2 design.
