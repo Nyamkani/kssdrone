@@ -495,6 +495,7 @@ void KSSDrone::TryPrintArmedProfileStats()
         const double mhz = static_cast<double>(CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
         const auto& p = this->imu_timing_;
 
+#if IMU_READ_MODE == IMU_READ_MODE_DIRECT
         ESP_LOGI(TAG,
                  "IMU_PHASE us(avg/max) total=%.2f/%.2f raw=%.2f/%.2f parse=%.2f/%.2f rest=%.2f/%.2f samples=%lu every=%lu",
                  static_cast<double>(p.sum_cycles) / denom,
@@ -507,6 +508,17 @@ void KSSDrone::TryPrintArmedProfileStats()
                  static_cast<double>(p.remainder_max_cycles) / mhz,
                  static_cast<unsigned long>(p.samples),
                  static_cast<unsigned long>(IMU_TIMING_SAMPLE_EVERY));
+
+#else
+        // In interrupt mode raw SPI reads / parsing run inside IMUTask.
+        // Only main-task snapshot consumption and LPF are measured here.
+        ESP_LOGI(TAG,
+                 "IMU_SNAPSHOT us(avg/max)=%.2f/%.2f samples=%lu every=%lu",
+                 static_cast<double>(p.sum_cycles) / denom,
+                 static_cast<double>(p.max_cycles) / mhz,
+                 static_cast<unsigned long>(p.samples),
+                 static_cast<unsigned long>(IMU_TIMING_SAMPLE_EVERY));
+#endif
 
         // Keep the sampling phase while resetting the measurement window.
         const uint32_t sample_slot = this->imu_timing_.sample_slot;
