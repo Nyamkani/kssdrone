@@ -201,7 +201,28 @@ esp_err_t KSSDrone::Armed(const float dt)
 #if ENABLE_ARMED_TIMING_PROFILE
     const uint32_t prof_imu = this->armed_prof_.Mark();
 #endif
+#if ENABLE_IMU_TIMING_PROFILE
+    // Sample one in 31 calls. Skip counter reads on all other iterations.
+    const bool imu_sample = (++this->imu_timing_.sample_slot >= IMU_TIMING_SAMPLE_EVERY);
+    if (imu_sample)
+    {
+        this->imu_timing_.sample_slot = 0;
+    }
+    const uint32_t imu_start_cycles = imu_sample ? esp_cpu_get_cycle_count() : 0U;
+#endif
     ret = this->ArmedImuFast(dt, ctx);
+#if ENABLE_IMU_TIMING_PROFILE
+    if (imu_sample)
+    {
+        const uint32_t cycles = static_cast<uint32_t>(esp_cpu_get_cycle_count()) - imu_start_cycles;
+        this->imu_timing_.sum_cycles += cycles;
+        if (cycles > this->imu_timing_.max_cycles)
+        {
+            this->imu_timing_.max_cycles = cycles;
+        }
+        ++this->imu_timing_.samples;
+    }
+#endif
 #if ENABLE_ARMED_TIMING_PROFILE
     this->armed_prof_.Record(ArmedTimingStage::IMU, prof_imu);
 #endif
