@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-source config/ci/analysis.env
+source ci/config/analysis.env
 mkdir -p ci-reports/style
 clang-format --version | tee ci-reports/style/tool-version.txt
 : > ci-reports/style/format.txt
 count=0
 while IFS= read -r -d '' file; do
-    if ! clang-format --dry-run --Werror --style="file:$PWD/config/ci/clang-format.yml" "$file" \
+    if ! clang-format --dry-run --Werror --style="file:$PWD/ci/config/clang-format.yml" "$file" \
         >> ci-reports/style/format.txt 2>&1; then
         count=$((count + 1))
     fi

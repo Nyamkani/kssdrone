@@ -109,8 +109,8 @@ jobs:
         run: |
           docker run --rm \
             -v "$PWD:/project" \
-            -v "$GITHUB_WORKSPACE/tools/ci:/ci-tools:ro" \
-            -v "$GITHUB_WORKSPACE/config/ci:/ci-config:ro" \
+            -v "$GITHUB_WORKSPACE/ci/tools:/ci-tools:ro" \
+            -v "$GITHUB_WORKSPACE/ci/config:/ci-config:ro" \
             -w /project \
             "espressif/idf:$IDF_VERSION" \
             bash /ci-tools/memory_analysis.sh \
@@ -153,7 +153,7 @@ jobs:
           sudo apt-get install -y cppcheck
       - name: Run static analysis
         if: env.ENABLE_STATIC_ANALYSIS == 'true'
-        run: bash tools/ci/static_analysis.sh
+        run: bash ci/tools/static_analysis.sh
       - name: Upload static analysis report
         if: always() && env.ENABLE_STATIC_ANALYSIS == 'true'
         uses: actions/upload-artifact@v6
@@ -177,7 +177,7 @@ jobs:
           sudo apt-get install -y clang-format
       - name: Check formatting (no source modification)
         if: env.ENABLE_CODE_STYLE == 'true'
-        run: bash tools/ci/style_check.sh
+        run: bash ci/tools/style_check.sh
       - name: Upload style report
         if: always() && env.ENABLE_CODE_STYLE == 'true'
         uses: actions/upload-artifact@v6

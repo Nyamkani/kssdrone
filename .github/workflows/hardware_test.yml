@@ -1,0 +1,26 @@
+name: ESP Hardware Test
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  ENABLE_HARDWARE_TEST: ${{ vars.ENABLE_HARDWARE_TEST || 'false' }}
+jobs:
+  hardware-smoke:
+    # Job-level gate prevents allocating a physical runner when disabled.
+    if: vars.ENABLE_HARDWARE_TEST == 'true'
+    runs-on: [self-hosted, linux, drone-bench]
+    timeout-minutes: 5
+    env:
+      CI_BOOT_LOG: ${{ vars.CI_BOOT_LOG }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Verify bench log configuration
+        run: |
+          test "$ENABLE_HARDWARE_TEST" = true
+          test -n "$CI_BOOT_LOG"
+          test -s "$CI_BOOT_LOG"
+      - name: Analyze captured boot log
+        run: python3 ci/tests/hardware/check_boot_log.py "$CI_BOOT_LOG"

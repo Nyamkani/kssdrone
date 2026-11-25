@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-source config/ci/analysis.env
+source ci/config/analysis.env
 mkdir -p ci-reports/static
 cppcheck --version | tee ci-reports/static/tool-version.txt
 # Source-only baseline: SDK headers and full target compile flags are not imported.
