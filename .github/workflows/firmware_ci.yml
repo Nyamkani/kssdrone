@@ -1,0 +1,92 @@
+
+name: ESP32-S3 Firmware CI
+
+on:
+  push:
+    branches:
+      - v1.3
+
+permissions:
+  contents: read
+
+jobs:
+  firmware-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      # 2. Runner environment
+      - name: Check runner environment
+        run: |
+          cat /etc/os-release
+          uname -a
+          lscpu
+          free -h
+          df -h
+          docker --version
+
+      # 3. Checkout source code
+      - name: Checkout source code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Check source version
+        run: |
+          git branch --show-current
+          git log -1 --oneline
+          git rev-parse HEAD
+          ls -la
+
+      # 4. Prepare ESP-IDF environment
+      - name: Prepare ESP-IDF v6.0
+        run: |
+          docker pull espressif/idf:v6.0
+
+      - name: Check ESP-IDF version
+        run: |
+          docker run --rm espressif/idf:v6.0 idf.py --version
+
+      # 5. Build firmware
+      - name: Build ESP32-S3 firmware
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/project" \
+            -w /project \
+            espressif/idf:v6.0 \
+            idf.py build
+
+      # 6. Verify and upload build artifacts
+      - name: Verify build artifacts
+        run: |
+          test -s build/esp32s3-drone.bin
+          test -s build/esp32s3-drone.elf
+          test -s build/bootloader/bootloader.bin
+          test -s build/partition_table/partition-table.bin
+          test -s build/flasher_args.json
+          ls -lh build/*.bin build/*.elf build/*.map
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: kssdrone-esp32s3-${{ github.sha }}
+          path: |
+            build/esp32s3-drone.bin
+            build/esp32s3-drone.elf
+            build/esp32s3-drone.map
+            build/bootloader/bootloader.bin
+            build/partition_table/partition-table.bin
+            build/flasher_args.json
+            build/flash_args
+            sdkconfig
+            dependencies.lock
+          if-no-files-found: error
+          retention-days: 30
+
+      # 7. Report CI result
+      - name: Report CI result
+        if: always()
+        run: |
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "CI Result: ${{ job.status }}"
