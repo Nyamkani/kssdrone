@@ -54,7 +54,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/project" \
             -w /project \
             espressif/idf:v6.0 \
-            idf.py build
+            idf.py -B /project/build -D SDKCONFIG=/project/sdkconfig build
 
       # 6. Verify and upload build artifacts
       - name: Verify build artifacts
