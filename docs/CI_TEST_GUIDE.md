@@ -1,0 +1,10 @@
+# CI / CD training (v1.3)
+Normal pushes trigger two workflows: ESP Firmware CI and ESP Software Test.
+The production source under main/ and SDK configuration are not modified.
+- Memory analysis uses the existing build and ESP-IDF size tools. Binary budget is in config/ci/memory_limits.env; 512 KiB is a training budget, not a hardware limit. RAM reporting is informational.
+- Static analysis is a source-only Cppcheck baseline, without complete ESP-IDF headers/compile flags. Style uses clang-format in dry-run mode. Both are report-only initially; config/ci/analysis.env enables strict gates.
+- Host tests build the actual header implementations in main/ using CMake/CTest; no target hardware or FreeRTOS scheduling is simulated. The flight controller test uses a minimal host-only ESP_OK/esp_err_t/DEG2RAD adapter. Unit, integration, regression, and illustrative single-axis SIL tests are separately labeled. Coverage covers only host-compiled source, with no threshold initially.
+- Local host test: cmake -S tests -B host-build && cmake --build host-build && ctest --test-dir host-build --output-on-failure
+- Hardware smoke: physically disconnect motor power/remove propellers, use a dedicated bench board, manually capture serial boot logs, then run python3 tests/hardware/check_boot_log.py boot.log. This is offline smoke analysis, not HIL. No self-hosted runner or automatic flashing is enabled on this public repository. True HIL requires an isolated bench, sensor/actuator emulator, and hardware safety setup.
+- Draft release: only a deliberate ci-release-* tag triggers the release workflow. It runs both reusable workflows for the tagged commit, downloads that run's firmware artifact, generates SHA256SUMS, and creates a draft release. No tag or release is created by installing these files. Hardware validation and explicit publication are separate. Report-only checks are not release gates until configured strict.
+- Artifacts expire after 30 days; release drafts are separate from Actions artifacts.

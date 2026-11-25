@@ -1,0 +1,36 @@
+name: ESP Draft Release
+on:
+  push:
+    tags:
+      - 'ci-release-*'
+permissions:
+  contents: read
+jobs:
+  firmware:
+    uses: ./.github/workflows/firmware_ci.yml
+  software:
+    uses: ./.github/workflows/software_test.yml
+  draft:
+    needs: [firmware, software]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified firmware
+        uses: actions/download-artifact@v6
+        with:
+          name: kssdrone-esp32s3-${{ github.sha }}
+          path: package
+      - name: Package and checksum
+        run: |
+          test -s package/build/esp32s3-drone.bin
+          (cd package && zip -qr ../kssdrone-firmware.zip .)
+          sha256sum kssdrone-firmware.zip > SHA256SUMS
+      - name: Create draft only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --draft --title "$GITHUB_REF_NAME" \
+            --notes "CI-built firmware. Hardware validation required before publication." \
+            kssdrone-firmware.zip SHA256SUMS

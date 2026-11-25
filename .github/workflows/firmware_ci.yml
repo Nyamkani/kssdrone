@@ -4,6 +4,7 @@ name: ESP Firmware CI
 # 1. Project configuration
 # ============================================================
 on:
+  workflow_call:
   push:
     branches:
       - v1.3
@@ -17,6 +18,9 @@ env:
   BUILD_DIR: build
   SDKCONFIG_FILE: sdkconfig
   ARTIFACT_RETENTION_DAYS: '30'
+  ENABLE_MEMORY_ANALYSIS: 'true'
+  ENABLE_STATIC_ANALYSIS: 'true'
+  ENABLE_CODE_STYLE: 'true'
 
 permissions:
   contents: read
@@ -99,6 +103,29 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
 
+      - name: Memory analysis
+        if: env.ENABLE_MEMORY_ANALYSIS == 'true'
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/project" \
+            -v "$GITHUB_WORKSPACE/tools/ci:/ci-tools:ro" \
+            -v "$GITHUB_WORKSPACE/config/ci:/ci-config:ro" \
+            -w /project \
+            "espressif/idf:$IDF_VERSION" \
+            bash /ci-tools/memory_analysis.sh \
+              "$BUILD_DIR" "$PROJECT_NAME" "$SDKCONFIG_FILE" \
+              /ci-config/memory_limits.env "$TARGET_MCU"
+
+      - name: Upload memory analysis reports
+        if: always() && env.ENABLE_MEMORY_ANALYSIS == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: memory-analysis-${{ github.sha }}
+          path: ${{ env.PROJECT_DIR }}/${{ env.BUILD_DIR }}/reports/memory/
+          if-no-files-found: warn
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+
       - name: Report CI result
         if: always()
         env:
@@ -110,3 +137,52 @@ jobs:
           echo "Target: $TARGET_MCU"
           echo "Project: $PROJECT_NAME"
           echo "CI Result: $CI_RESULT"
+
+
+  static-analysis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install Cppcheck
+        if: env.ENABLE_STATIC_ANALYSIS == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+      - name: Run static analysis
+        if: env.ENABLE_STATIC_ANALYSIS == 'true'
+        run: bash tools/ci/static_analysis.sh
+      - name: Upload static analysis report
+        if: always() && env.ENABLE_STATIC_ANALYSIS == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: static-analysis-${{ github.sha }}
+          path: ci-reports/static/
+          if-no-files-found: warn
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+
+  code-style:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install clang-format
+        if: env.ENABLE_CODE_STYLE == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+      - name: Check formatting (no source modification)
+        if: env.ENABLE_CODE_STYLE == 'true'
+        run: bash tools/ci/style_check.sh
+      - name: Upload style report
+        if: always() && env.ENABLE_CODE_STYLE == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: code-style-${{ github.sha }}
+          path: ci-reports/style/
+          if-no-files-found: warn
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
