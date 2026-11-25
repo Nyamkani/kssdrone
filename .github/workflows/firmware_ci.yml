@@ -1,10 +1,22 @@
+name: ESP Firmware CI
 
-name: ESP32-S3 Firmware CI
-
+# ============================================================
+# 1. Project configuration
+# ============================================================
 on:
   push:
     branches:
       - v1.3
+
+env:
+  IDF_VERSION: v6.0
+  PROJECT_NAME: esp32s3-drone
+  TARGET_MCU: esp32s3
+  ARTIFACT_NAME: kssdrone-esp32s3
+  PROJECT_DIR: .
+  BUILD_DIR: build
+  SDKCONFIG_FILE: sdkconfig
+  ARTIFACT_RETENTION_DAYS: '30'
 
 permissions:
   contents: read
@@ -14,8 +26,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
+    # ========================================================
+    # 2. Common implementation
+    # ========================================================
     steps:
-      # 2. Runner environment
       - name: Check runner environment
         run: |
           cat /etc/os-release
@@ -25,68 +39,74 @@ jobs:
           df -h
           docker --version
 
-      # 3. Checkout source code
       - name: Checkout source code
         uses: actions/checkout@v6
         with:
           persist-credentials: false
 
-      - name: Check source version
+      - name: Check source and target configuration
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          git branch --show-current
           git log -1 --oneline
           git rev-parse HEAD
-          ls -la
+          test -f CMakeLists.txt
+          test -f "$SDKCONFIG_FILE"
+          grep -Fx "CONFIG_IDF_TARGET=\"$TARGET_MCU\"" "$SDKCONFIG_FILE"
 
-      # 4. Prepare ESP-IDF environment
-      - name: Prepare ESP-IDF v6.0
-        run: |
-          docker pull espressif/idf:v6.0
+      - name: Prepare ESP-IDF environment
+        run: docker pull "espressif/idf:$IDF_VERSION"
 
       - name: Check ESP-IDF version
-        run: |
-          docker run --rm espressif/idf:v6.0 idf.py --version
+        run: docker run --rm "espressif/idf:$IDF_VERSION" idf.py --version
 
-      # 5. Build firmware
-      - name: Build ESP32-S3 firmware
+      - name: Build firmware
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           docker run --rm \
-            -v "$GITHUB_WORKSPACE:/project" \
+            -v "$PWD:/project" \
             -w /project \
-            espressif/idf:v6.0 \
-            idf.py -B /project/build -D SDKCONFIG=/project/sdkconfig build
+            "espressif/idf:$IDF_VERSION" \
+            idf.py -B "/project/$BUILD_DIR" \
+              -D "SDKCONFIG=/project/$SDKCONFIG_FILE" \
+              -D "IDF_TARGET=$TARGET_MCU" build
 
-      # 6. Verify and upload build artifacts
       - name: Verify build artifacts
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          test -s build/esp32s3-drone.bin
-          test -s build/esp32s3-drone.elf
-          test -s build/bootloader/bootloader.bin
-          test -s build/partition_table/partition-table.bin
-          test -s build/flasher_args.json
-          ls -lh build/*.bin build/*.elf build/*.map
+          test -s "$BUILD_DIR/$PROJECT_NAME.bin"
+          test -s "$BUILD_DIR/$PROJECT_NAME.elf"
+          test -s "$BUILD_DIR/$PROJECT_NAME.map"
+          test -s "$BUILD_DIR/bootloader/bootloader.bin"
+          test -s "$BUILD_DIR/partition_table/partition-table.bin"
+          test -s "$BUILD_DIR/flasher_args.json"
+          test -s "$BUILD_DIR/flash_args"
+          ls -lh "$BUILD_DIR/$PROJECT_NAME".{bin,elf,map}
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: kssdrone-esp32s3-${{ github.sha }}
+          name: ${{ env.ARTIFACT_NAME }}-${{ github.sha }}
           path: |
-            build/esp32s3-drone.bin
-            build/esp32s3-drone.elf
-            build/esp32s3-drone.map
-            build/bootloader/bootloader.bin
-            build/partition_table/partition-table.bin
-            build/flasher_args.json
-            build/flash_args
-            sdkconfig
-            dependencies.lock
+            ${{ env.PROJECT_DIR }}/${{ env.BUILD_DIR }}/${{ env.PROJECT_NAME }}.bin
+            ${{ env.PROJECT_DIR }}/${{ env.BUILD_DIR }}/${{ env.PROJECT_NAME }}.elf
+            ${{ env.PROJECT_DIR }}/${{ env.BUILD_DIR }}/${{ env.PROJECT_NAME }}.map
+            ${{ env.PROJECT_DIR }}/${{ env.BUILD_DIR }}/bootloader/bootloader.bin
+            ${{ env.PROJECT_DIR }}/${{ env.BUILD_DIR }}/partition_table/partition-table.bin
+            ${{ env.PROJECT_DIR }}/${{ env.BUILD_DIR }}/flasher_args.json
+            ${{ env.PROJECT_DIR }}/${{ env.BUILD_DIR }}/flash_args
+            ${{ env.PROJECT_DIR }}/${{ env.SDKCONFIG_FILE }}
+            ${{ env.PROJECT_DIR }}/dependencies.lock
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
 
-      # 7. Report CI result
       - name: Report CI result
         if: always()
+        env:
+          CI_RESULT: ${{ job.status }}
         run: |
-          echo "Commit: ${{ github.sha }}"
-          echo "Branch: ${{ github.ref_name }}"
-          echo "CI Result: ${{ job.status }}"
+          echo "Commit: $GITHUB_SHA"
+          echo "Branch: $GITHUB_REF_NAME"
+          echo "ESP-IDF: $IDF_VERSION"
+          echo "Target: $TARGET_MCU"
+          echo "Project: $PROJECT_NAME"
+          echo "CI Result: $CI_RESULT"
